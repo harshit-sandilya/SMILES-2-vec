@@ -1,6 +1,7 @@
 import os
 from argparse import ArgumentParser
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import torch
 from torch_geometric.loader import DataLoader
@@ -14,6 +15,9 @@ from utils import has_max_64_atoms
 
 if not os.path.exists("model"):
     os.makedirs("model")
+
+if not os.path.exists("results"):
+    os.makedirs("results")
 
 parser = ArgumentParser()
 parser.add_argument(
@@ -31,7 +35,7 @@ smiles = df_filtered["smiles"].values
 tokenizer = SMILESTokenizer()
 X = [tokenizer.tokenize(s) for s in smiles]
 dataset = MaskedMoleculeDataset(X)
-loader = DataLoader(dataset, batch_size=32, shuffle=True)
+loader = DataLoader(dataset, batch_size=256, shuffle=True)
 
 model = GraphMoleculeModel(
     hidden_dim=hidden_dim,
@@ -44,6 +48,12 @@ model = GraphMoleculeModel(
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
 loss_fn_atom = torch.nn.CrossEntropyLoss(ignore_index=-1)
 loss_fn_bond = torch.nn.CrossEntropyLoss(ignore_index=-1)
+
+total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print(f"Total trainable model parameters: {total_params}")
+
+step_atom_losses = []
+step_bond_losses = []
 
 for epoch in range(EPOCHS):
     model.train()
@@ -64,26 +74,33 @@ for epoch in range(EPOCHS):
         atom_loss = loss_fn_atom(atom_logits, true_atoms)
 
         masked_bond_mask = true_bonds != -1
-        bond_loss = loss_fn_bond(
-            bond_logits[masked_bond_mask], true_bonds[masked_bond_mask]
-        )
+        if masked_bond_mask.sum() > 0:
+            bond_loss = loss_fn_bond(
+                bond_logits[masked_bond_mask], true_bonds[masked_bond_mask]
+            )
+        else:
+            bond_loss = torch.tensor(0.0, device=device)
 
         if torch.isnan(bond_loss):
-            bond_loss = 0.0
+            bond_loss = torch.tensor(0.0, device=device)
 
         total_loss = atom_loss + bond_loss
 
         total_loss.backward()
         optimizer.step()
 
-        total_atom_loss += atom_loss.item()
-        if isinstance(bond_loss, torch.Tensor):
-            total_bond_loss += bond_loss.item()
+        atom_loss_item = atom_loss.item()
+        bond_loss_item = bond_loss.item()
+        step_atom_losses.append(atom_loss_item)
+        step_bond_losses.append(bond_loss_item)
+
+        total_atom_loss += atom_loss_item
+        total_bond_loss += bond_loss_item
 
         progress_bar.set_postfix(
             {
-                "atom_loss": f"{atom_loss.item():.4f}",
-                "bond_loss": f"{bond_loss.item() if isinstance(bond_loss, torch.Tensor) else 0.0:.4f}",
+                "atom_loss": f"{atom_loss_item:.4f}",
+                "bond_loss": f"{bond_loss_item:.4f}",
             }
         )
 
@@ -98,3 +115,51 @@ for epoch in range(EPOCHS):
 
 print("Training finished.")
 torch.save(model.state_dict(), "model/model_final.pt")
+
+
+print("Generating and saving separate loss curves...")
+window_size = len(loader)
+print(f"Using a rolling window size of {window_size} (1 epoch) for smoothing.")
+
+atom_loss_series = pd.Series(step_atom_losses)
+bond_loss_series = pd.Series(step_bond_losses)
+
+atom_loss_rolling = atom_loss_series.rolling(window=window_size, min_periods=1).mean()
+bond_loss_rolling = bond_loss_series.rolling(window=window_size, min_periods=1).mean()
+
+# --- Plot 1: Atom Loss ---
+plt.figure(figsize=(12, 7))
+plt.plot(step_atom_losses, label="Step Atom Loss", alpha=0.3, color="tab:blue")
+plt.plot(
+    atom_loss_rolling,
+    label=f"Epoch-wise Rolling Average (window={window_size})",
+    linewidth=2,
+    color="tab:blue",
+)
+plt.title("Atom Prediction Loss Curve")
+plt.xlabel("Training Step (Batch)")
+plt.ylabel("Loss")
+plt.legend()
+plt.grid(True, linestyle="--", alpha=0.6)
+plt.savefig("results/loss_curve_atom.png")
+plt.close()
+print("Atom loss curve saved to results/loss_curve_atom.png")
+
+
+# --- Plot 2: Bond Loss ---
+plt.figure(figsize=(12, 7))
+plt.plot(step_bond_losses, label="Step Bond Loss", alpha=0.3, color="tab:orange")
+plt.plot(
+    bond_loss_rolling,
+    label=f"Epoch-wise Rolling Average (window={window_size})",
+    linewidth=2,
+    color="tab:orange",
+)
+plt.title("Bond Prediction Loss Curve")
+plt.xlabel("Training Step (Batch)")
+plt.ylabel("Loss")
+plt.legend()
+plt.grid(True, linestyle="--", alpha=0.6)
+plt.savefig("results/loss_curve_bond.png")
+plt.close()
+print("Bond loss curve saved to results/loss_curve_bond.png")

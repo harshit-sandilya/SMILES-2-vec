@@ -7,11 +7,11 @@ import torch
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
+from config import *
 from dataset import MaskedMoleculeDataset
 from model import GraphMoleculeModel
 from tokenizer import SMILESTokenizer
 from utils import has_max_64_atoms
-from config import *
 
 if not os.path.exists("embeddings"):
     os.makedirs("embeddings")
@@ -28,7 +28,14 @@ model_file = args.model_file
 data_file = args.data_file
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-inference_model = GraphMoleculeModel(hidden_dim=hidden_dim, num_layers=num_layers, num_heads=num_heads, ATOM_VOCAB_SIZE=ATOM_VOCAB_SIZE, BOND_VOCAB_SIZE=BOND_VOCAB_SIZE, device=device)
+inference_model = GraphMoleculeModel(
+    hidden_dim=hidden_dim,
+    num_layers=num_layers,
+    num_heads=num_heads,
+    ATOM_VOCAB_SIZE=ATOM_VOCAB_SIZE,
+    BOND_VOCAB_SIZE=BOND_VOCAB_SIZE,
+    device=device,
+)
 inference_model.load_state_dict(torch.load(model_file, map_location=device))
 inference_model.eval()
 print("Model weights loaded successfully.")

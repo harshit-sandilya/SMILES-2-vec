@@ -4,7 +4,6 @@ from argparse import ArgumentParser
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 import umap
 
 from utils import has_max_64_atoms

@@ -3,10 +3,10 @@ from argparse import ArgumentParser
 import torch
 from sklearn.metrics.pairwise import cosine_similarity
 
+from config import *
 from model import GraphMoleculeModel
 from tokenizer import SMILESTokenizer
 from utils import get_single_embedding
-from config import *
 
 parser = ArgumentParser()
 parser.add_argument(
@@ -16,7 +16,14 @@ args = parser.parse_args()
 model_file = args.model_file
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-inference_model = GraphMoleculeModel(hidden_dim=hidden_dim,num_layers=num_layers,num_heads=num_heads,ATOM_VOCAB_SIZE=ATOM_VOCAB_SIZE,BOND_VOCAB_SIZE=BOND_VOCAB_SIZE,device=device)
+inference_model = GraphMoleculeModel(
+    hidden_dim=hidden_dim,
+    num_layers=num_layers,
+    num_heads=num_heads,
+    ATOM_VOCAB_SIZE=ATOM_VOCAB_SIZE,
+    BOND_VOCAB_SIZE=BOND_VOCAB_SIZE,
+    device=device,
+)
 inference_model.load_state_dict(torch.load(model_file, map_location=device))
 inference_model.eval()
 print("Model weights loaded successfully.")
