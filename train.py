@@ -109,9 +109,7 @@ for epoch in range(EPOCHS):
     print(
         f"Epoch {epoch+1} Summary: Avg Atom Loss: {avg_atom_loss:.4f}, Avg Bond Loss: {avg_bond_loss:.4f}"
     )
-
-    if (epoch + 1) % 10 == 0:
-        torch.save(model.state_dict(), f"model/model_epoch_{epoch+1}.pt")
+    torch.save(model.state_dict(), f"model/model_epoch_{epoch+1}.pt")
 
 print("Training finished.")
 torch.save(model.state_dict(), "model/model_final.pt")
