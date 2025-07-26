@@ -11,6 +11,6 @@ BOND_VOCAB_SIZE = MAX_BOND_TYPE + 2
 EPOCHS = 10
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-hidden_dim = 256
-num_layers = 6
-num_heads = 8
+hidden_dim = 512
+num_layers = 8
+num_heads = 12

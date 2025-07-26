@@ -12,10 +12,8 @@ class GraphMoleculeModel(nn.Module):
         num_heads,
         ATOM_VOCAB_SIZE,
         BOND_VOCAB_SIZE,
-        device,
     ):
         super().__init__()
-        self.device = device
         self.atom_embedder = nn.Embedding(ATOM_VOCAB_SIZE, hidden_dim)
         self.bond_embedder = nn.Embedding(BOND_VOCAB_SIZE, hidden_dim)
         self.gnn_layers = nn.ModuleList()
@@ -32,13 +30,11 @@ class GraphMoleculeModel(nn.Module):
         self.pool = gnn.aggr.AttentionalAggregation(gate_nn=nn.Linear(hidden_dim, 1))
         self.predict_atom = nn.Linear(hidden_dim, ATOM_VOCAB_SIZE)
         self.predict_bond = nn.Linear(hidden_dim * 2, BOND_VOCAB_SIZE)
-        self.to(self.device)
 
     def forward(self, data):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
-        x = x.to(self.device)
-        edge_index = edge_index.to(self.device)
-        edge_attr = edge_attr.to(self.device)
+        edge_index = edge_index
+        edge_attr = edge_attr
         x = self.atom_embedder(x.squeeze())
         edge_attr = self.bond_embedder(edge_attr)
         for layer in self.gnn_layers:
@@ -57,10 +53,10 @@ class GraphMoleculeModel(nn.Module):
             data.edge_attr,
             data.batch,
         )
-        x = x.to(self.device)
-        edge_index = edge_index.to(self.device)
-        edge_attr = edge_attr.to(self.device)
-        batch_idx = batch_idx.to(self.device)
+        x = x
+        edge_index = edge_index
+        edge_attr = edge_attr
+        batch_idx = batch_idx
         x = self.atom_embedder(x.squeeze())
         edge_attr = self.bond_embedder(edge_attr)
         for layer in self.gnn_layers:

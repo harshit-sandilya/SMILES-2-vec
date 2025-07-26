@@ -3,6 +3,8 @@ from rdkit.Chem import AllChem as Chem
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
+from config import MASK_ATOM_ID, MASK_BOND_ID
+
 
 def has_max_64_atoms(smiles):
     mol = Chem.MolFromSmiles(smiles)
@@ -49,6 +51,42 @@ def create_graph_data(
         smile=tokenized_item["smile"],
     )
     return graph_data
+
+
+def create_masked_graph_from_tensors(
+    atomic_numbers: torch.Tensor,
+    bond_matrix: torch.Tensor,
+    mask_ratio_atoms: float,
+    mask_ratio_bonds: float,
+) -> Data:
+    num_atoms = (atomic_numbers != 0).sum().item()
+    atomic_feats = atomic_numbers[:num_atoms].clone()
+    atom_labels = torch.full_like(atomic_feats, -1)
+    num_atoms_to_mask = int(num_atoms * mask_ratio_atoms)
+    if num_atoms_to_mask > 0:
+        mask_indices = torch.randperm(num_atoms)[:num_atoms_to_mask]
+        atom_labels[mask_indices] = atomic_feats[mask_indices]
+        atomic_feats[mask_indices] = MASK_ATOM_ID
+    bond_matrix_unpadded = bond_matrix[:num_atoms, :num_atoms]
+    edge_index = bond_matrix_unpadded.nonzero().t().contiguous()
+    edge_attr = bond_matrix_unpadded[edge_index[0], edge_index[1]].clone()
+    bond_labels = torch.full_like(edge_attr, -1)
+    unique_edge_mask = edge_index[0] < edge_index[1]
+    unique_edge_indices = torch.where(unique_edge_mask)[0]
+    num_unique_bonds = len(unique_edge_indices)
+    num_bonds_to_mask = int(num_unique_bonds * mask_ratio_bonds)
+    if num_bonds_to_mask > 0:
+        mask_bond_perm = torch.randperm(num_unique_bonds)[:num_bonds_to_mask]
+        mask_edge_indices = unique_edge_indices[mask_bond_perm]
+        bond_labels[mask_edge_indices] = edge_attr[mask_edge_indices]
+        edge_attr[mask_edge_indices] = MASK_BOND_ID
+    return Data(
+        x=atomic_feats.unsqueeze(-1),
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        y_atoms=atom_labels,
+        y_bonds=bond_labels,
+    )
 
 
 def get_single_embedding(smiles_string, model, tokenizer, device):

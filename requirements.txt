@@ -11,3 +11,6 @@ torch_geometric
 tqdm
 umap_learn
 xgboost
+lightning
+litdata
+tensorboard

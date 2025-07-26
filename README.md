@@ -2,81 +2,70 @@
 
 This project implements a Graph Neural Network (GNN) pipeline for molecular property prediction and representation learning using SMILES strings. The workflow includes data download, preprocessing, model training, embedding generation, visualization, and benchmarking against standard datasets.
 
+## Prerequisites
+
+- Python 3.10 or higher
+- Required Python packages (see `requirements.txt`)
+- Access to a GPU for training (optional but recommended)
+
+## Setup Instructions
+
+### Clone the repository:
+
+```bash
+git clone https://github.com/harshit-sandilya/SMILES-2-vec.git
+cd SMILES-2-vec
+```
+
+### Install the required packages:
+
+```bash
+pip install -r requirements.txt
+```
+
+### Download the dataset:
+
+#### ChEMBL
+```bash
+python download_chembl_dataset.py
+```
+
+or
+
+```bash
+python download_chembl_dataset.py -m number_of_molecules
+```
+
+#### ZINC
+
+```bash
+wget -i zinc_urls.txt -P ZINC
+python process_zinc.py
+python calculate_zinc_metrics.py
+```
+
+### Canocalize the SMILES strings:
+
+```bash
+python canonicalize_smiles.py
+```
+
 ## Features
-- **Data Download**: Fetch molecules and properties from ChEMBL using `download.py`.
-- **Preprocessing**: Filter, tokenize, and convert SMILES to graph data structures.
-- **Model**: GNN based on PyTorch Geometric with attention layers for atom and bond prediction.
-- **Training**: Masked atom and bond prediction for self-supervised learning (`train.py`).
-- **Embeddings**: Generate molecular embeddings for downstream tasks (`generate_embeddings.py`).
-- **Visualization**: UMAP and property scatter plots for embedding analysis (`visualise_molecules.py`).
-- **Property Prediction**: Predict molecular properties (e.g., LogP) using embeddings and random forest regression (`logP_test.py`).
-- **Benchmarking**: Compare GNN embeddings to ECFP fingerprints on MoleculeNet datasets.
 
-## Installation
-1. **Clone the repository** and install dependencies:
-   ```bash
-   git clone <repo-url>
-   cd SMILES
-   pip install -r requirements.txt
-   ```
+### Data Analysis
+The dataset analysis script analyzes the downloaded dataset, providing insights into molecular properties and distributions some of which include:
+- Molecular weight
+- LogP (octanol-water partition coefficient)
+- Number of hydrogen bond donors (HBD)
+- Number of hydrogen bond acceptors (HBA)
+- Number of atoms
+- Number of heavy atoms
+- Number of rings
+- Topological Polar Surface Area (TPSA)
+- Functional Group
 
-2. **Download ChEMBL Data**:
-   ```bash
-   python download.py -m 10000
-   ```
-   or to download complete dataset
-   ```bash
-   python download.py
-   ```
+```bash
+python analyze_dataset.py
+```
 
-## Usage
-
-### 1. Training
-- Train the GNN model:
-  ```bash
-  python train.py --train_file chembl_data.csv
-  ```
-  Model checkpoints are saved in the `model/` directory.
-
-### 2. Generate Embeddings
-- Generate molecular embeddings using the trained model:
-  ```bash
-  python generate_embeddings.py --model-file model/model_final.pt --data-file chembl_data.csv
-  ```
-  Embeddings are saved to `embeddings/molecule_embeddings.pkl`.
-
-### 3. Visualization
-- Visualize embeddings colored by molecular properties:
-  ```bash
-  python visualise_molecules.py --embeddings embeddings/molecule_embeddings.pkl --data chembl_data.csv
-  ```
-  UMAP plots are saved in the `results/` directory.
-
-### 4. Property Prediction
-- Predict LogP or other properties from embeddings:
-  ```bash
-  python logP_test.py --embeddings embeddings/molecule_embeddings.pkl --data chembl_data.csv
-  ```
-  Results and scatter plots are saved in `results/`.
-
-### 5. Benchmarking
-
-## File Overview
-- `download.py`: Download molecules from ChEMBL.
-- `preprocess.ipynb`: Data preprocessing and exploratory analysis.
-- `tokenizer.py`: SMILES to graph tokenization.
-- `dataset.py`: PyTorch Dataset for masked molecule modeling.
-- `model.py`: GNN model definition.
-- `train.py`: Model training script.
-- `generate_embeddings.py`: Embedding generation script.
-- `visualise_molecules.py`: UMAP and property visualization.
-- `logP_test.py`: Property prediction from embeddings.
-- `utils.py`: Utility functions.
-- `chembl_data.csv`: Downloaded molecule data.
-- `molecule_embeddings.pkl`: Generated embeddings.
-
-## Citation
-If you use this codebase, please cite the original ChEMBL and MoleculeNet papers, and any relevant GNN or PyTorch Geometric references.
-
-## License
-This project is for research and educational purposes. See `LICENSE` for details.
+### Data Prepration
