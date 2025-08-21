@@ -92,7 +92,12 @@ def create_masked_graph_from_tensors(
 def get_single_embedding(smiles_string, model, tokenizer, device):
     try:
         tokenized = tokenizer.tokenize(smiles_string)
-        data = create_graph_data(tokenized, mask_ratio_atoms=0.0, mask_ratio_bonds=0.0)
+        data = create_masked_graph_from_tensors(
+            tokenized["atomic_numbers"],
+            tokenized["bond_matrix"],
+            mask_ratio_atoms=0,
+            mask_ratio_bonds=0,
+        )
         loader = DataLoader([data], batch_size=1, shuffle=False)
         batch = next(iter(loader)).to(device)
         with torch.no_grad():
