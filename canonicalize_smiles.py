@@ -41,23 +41,27 @@ def process_file_parallel(
 
     with Pool(processes=num_workers) as pool:
         with tqdm(total=total_rows, desc="Canonicalizing SMILES", unit="mol") as pbar:
-            for chunk in reader:
+            # for chunk in reader:
+            for i, chunk in enumerate(reader):
                 if "smiles" not in chunk.columns:
                     raise ValueError("Input CSV must have a 'smiles' column.")
+                chunk = chunk.head(5000)
+                if i > 0:
+                    break
 
-                canonical_results = pool.map(worker_func, chunk["smiles"])
-                chunk["smiles"] = canonical_results
-                chunk.dropna(subset=["smiles"], inplace=True)
+                # canonical_results = pool.map(worker_func, chunk["smiles"])
+                # chunk["smiles"] = canonical_results
+                # chunk.dropna(subset=["smiles"], inplace=True)
 
-                if not chunk.empty:
-                    if not header_written:
-                        chunk.to_csv(output_path, index=False, mode="w")
-                        header_written = True
-                    else:
-                        chunk.to_csv(output_path, index=False, mode="a", header=False)
+                # if not chunk.empty:
+                #     if not header_written:
+                #         chunk.to_csv(output_path, index=False, mode="w")
+                #         header_written = True
+                #     else:
+                #         chunk.to_csv(output_path, index=False, mode="a", header=False)
 
-                pbar.update(len(chunk))
-                processed_rows += len(chunk)
+                # pbar.update(len(chunk))
+                # processed_rows += len(chunk)
 
     print("-" * 30)
     print(f"[✔] Processing complete.")
@@ -73,7 +77,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--input",
-        default="data/smiles.csv",
+        default="data/chembl_data.csv",
         type=str,
         help="Path to the input CSV file (must contain a 'smiles' column).",
     )

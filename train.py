@@ -5,6 +5,14 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import EarlyStopping
 
+import os
+import sys
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+
 from config import *
 from data_module import MoleculeDataModule
 from lightning_model import GraphMoleculeLightning
@@ -16,7 +24,10 @@ if not os.path.exists(model_dir):
 if __name__ == "__main__":
     pl.seed_everything(42)
     datamodule = MoleculeDataModule(
-        data_dir="optimized_graph_dataset",
+        # data_dir="optimized_graph_dataset",
+        # data_dir="optimized_graph_dataset_10k",
+        # data_dir="optimized_graph_dataset_30k",
+        data_dir="optimized_graph_dataset_50k",
         batch_size=64,
         num_workers=os.cpu_count() or 1,
     )
@@ -36,11 +47,12 @@ if __name__ == "__main__":
         monitor="val_loss", patience=3, verbose=True, mode="min"
     )
     trainer = pl.Trainer(
-        max_epochs=-1,
+        max_epochs=10,
         accelerator="cpu",
         callbacks=[checkpoint_callback, early_stopping_callback],
         logger=tensorboard_logger,
         log_every_n_steps=10,
+    
     )
     print("Starting training on CPU...")
     trainer.fit(model, datamodule=datamodule)
