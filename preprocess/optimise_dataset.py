@@ -1,18 +1,25 @@
-import os
 import warnings
 from multiprocessing import Pool, cpu_count
+from pathlib import Path
 
 import pandas as pd
 from lightning.data import optimize
 
-from tokenizer import SMILESTokenizer
-from utils import create_masked_graph_from_tensors, has_max_64_atoms
+from preprocess.tokenizer import SMILESTokenizer
+from train.utils import create_masked_graph_from_tensors, has_max_64_atoms
 
 warnings.filterwarnings(
     "ignore",
     message="An item was larger than the target chunk size",
     category=UserWarning,
 )
+
+# ==============================
+# Resolve project root & data dir
+# ==============================
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
 
 tokenizer = None
 
@@ -27,6 +34,7 @@ def process_single_smiles(smiles: str):
     try:
         if not has_max_64_atoms(smiles):
             return None
+
         tokenized_smiles = tokenizer.tokenize(smiles)
         data = create_masked_graph_from_tensors(
             atomic_numbers=tokenized_smiles["atomic_numbers"],
@@ -45,29 +53,30 @@ def parallel_process_and_create_graphs(input_file: str):
     num_processes = cpu_count()
 
     with Pool(processes=num_processes, initializer=init_worker) as pool:
-        with pd.read_csv(input_file, chunksize=csv_chunk_size) as reader:
-            for i, chunk_df in enumerate(reader):
-                smiles_list = chunk_df["smiles"].dropna().tolist()
-                for data in pool.imap_unordered(
-                    process_single_smiles, smiles_list, chunksize=pool_chunk_size
-                ):
-                    if data:
-                        yield data
+        for chunk_df in pd.read_csv(input_file, chunksize=csv_chunk_size):
+            smiles_list = chunk_df["smiles"].dropna().tolist()
+            for data in pool.imap_unordered(
+                process_single_smiles,
+                smiles_list,
+                chunksize=pool_chunk_size,
+            ):
+                if data is not None:
+                    yield data
 
 
 if __name__ == "__main__":
-    input_csv_file = "data/canonical_smiles.csv"
-    output_dir = "optimized_graph_dataset"
+    input_csv_file = DATA_DIR / "canonical_smiles.csv"
+    output_dir = DATA_DIR / "optimized_graph_dataset"
 
     print(f"Starting dataset optimization for {input_csv_file}...")
 
     optimize(
         fn=parallel_process_and_create_graphs,
-        inputs=[input_csv_file],
-        output_dir=output_dir,
+        inputs=[str(input_csv_file)],
+        output_dir=str(output_dir),
         num_workers=1,
         chunk_bytes="128MB",
     )
 
-    print("\nDataset optimization complete!")
-    print(f"Your streamable dataset is ready in the '{output_dir}/' directory.")
+    print("\n✔ Dataset optimization complete!")
+    print(f"Streamable dataset created at: {output_dir}")

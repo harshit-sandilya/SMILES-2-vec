@@ -1,4 +1,4 @@
-from model import GraphMoleculeModel
+from train.model import GraphMoleculeModel
 from torch.nn import CrossEntropyLoss
 import torch
 import pytorch_lightning as pl

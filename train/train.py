@@ -6,17 +6,21 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import EarlyStopping
 
 from config import *
-from data_module import MoleculeDataModule
-from lightning_model import GraphMoleculeLightning
+from train.data_module import MoleculeDataModule
+from train.lightning_model import GraphMoleculeLightning
+BASE_DATA_DIR = "data"
+BASE_RESULTS_DIR = "results"
+BASE_MODELS_DIR = os.path.join(BASE_RESULTS_DIR, "models")
+BASE_LOGS_DIR = os.path.join(BASE_RESULTS_DIR, "logs")
 
-model_dir = "checkpoints/"
-if not os.path.exists(model_dir):
-    os.makedirs(model_dir)
+model_dir = BASE_MODELS_DIR
+
+os.makedirs(model_dir, exist_ok=True)
 
 if __name__ == "__main__":
     pl.seed_everything(42)
     datamodule = MoleculeDataModule(
-        data_dir="optimized_graph_dataset",
+        data_dir=os.path.join(BASE_DATA_DIR, "optimized_graph_dataset"),
         batch_size=64,
         num_workers=os.cpu_count() or 1,
     )
@@ -30,11 +34,14 @@ if __name__ == "__main__":
         save_top_k=-1,
     )
     tensorboard_logger = TensorBoardLogger(
-        save_dir="lightning_logs/", name="graph_molecule_model"
+    save_dir=BASE_LOGS_DIR, name="graph_molecule_model"
     )
+    
     early_stopping_callback = EarlyStopping(
         monitor="val_loss", patience=3, verbose=True, mode="min"
     )
+    os.makedirs(BASE_LOGS_DIR, exist_ok=True)
+
     trainer = pl.Trainer(
         max_epochs=-1,
         accelerator="cpu",
@@ -46,4 +53,5 @@ if __name__ == "__main__":
     trainer.fit(model, datamodule=datamodule)
     print("Training completed.")
 
-    trainer.save_checkpoint("checkpoints/final_model.ckpt")
+    trainer.save_checkpoint(os.path.join(BASE_MODELS_DIR, "final_model.ckpt"))
+

@@ -5,6 +5,7 @@ import pandas as pd
 from chembl_webresource_client.new_client import new_client
 from tqdm import tqdm
 
+BASE_DATA_DIR = "data"
 
 def save_batch_to_csv(data, filename, write_header):
     if not data:
@@ -43,16 +44,17 @@ if __name__ == "__main__":
 
     TOTAL_MOLECULES_TO_DOWNLOAD = args.molecules
     BATCH_SIZE = args.batch_size
-    OUTPUT_FILENAME = args.output
+    # Ensure all outputs go under data/
+    OUTPUT_FILENAME = (
+        args.output
+        if os.path.isabs(args.output)
+        else os.path.join(BASE_DATA_DIR, args.output)
+    )
+
 
     output_dir = os.path.dirname(OUTPUT_FILENAME)
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        print(f"Created directory: {output_dir}")
+    os.makedirs(output_dir, exist_ok=True)
 
-    if os.path.exists(OUTPUT_FILENAME):
-        os.remove(OUTPUT_FILENAME)
-        print(f"Removed existing file: {OUTPUT_FILENAME}")
 
     print("Connecting to ChEMBL...")
     molecule_api = new_client.molecule

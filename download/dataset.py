@@ -1,6 +1,6 @@
 from torch.utils.data import Dataset
 
-from utils import create_masked_graph_from_tensors
+from train.utils import create_masked_graph_from_tensors
 
 
 class MaskedMoleculeDataset(Dataset):

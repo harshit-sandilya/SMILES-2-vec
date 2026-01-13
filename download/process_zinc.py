@@ -4,14 +4,21 @@ import os
 
 from tqdm import tqdm
 
+BASE_DATA_DIR = "data"
 
 def main(input_folder, output_path):
-    output_csv = output_path
+    # Ensure output is written under data/
+    output_csv = (
+        output_path
+        if os.path.isabs(output_path)
+        else os.path.join(BASE_DATA_DIR, output_path)
+    )
+
 
     output_dir = os.path.dirname(output_csv)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-        print(f"Created directory: {output_dir}")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    print(f"Created directory: {output_dir}")
 
     if os.path.exists(output_csv):
         os.remove(output_csv)
@@ -50,9 +57,10 @@ if __name__ == "__main__":
         help="Path to the input folder containing .smi files",
     )
     parser.add_argument(
-        "--output-path",
-        default="data/zinc_smiles.csv",
-        help="Path to the output CSV file",
+    "--output-path",
+    default="zinc_smiles.csv",
+    help="Output CSV filename (saved under data/ by default)",
     )
+
     args = parser.parse_args()
     main(args.input_folder, args.output_path)

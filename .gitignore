@@ -1,11 +1,3 @@
 data/
-embeddings/
-model/
-plots/
 results/
-ZINC/
-
-__pycache__/
-.ruff_cache/
-optimized_graph_dataset/
-lightning_logs/
+/venv

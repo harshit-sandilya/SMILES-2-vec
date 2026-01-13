@@ -10,6 +10,7 @@ from rdkit import Chem
 from rdkit.Chem import Descriptors
 from tqdm import tqdm
 
+BASE_RESULTS_DIR = "results"
 
 def process_chunk(chunk, functional_groups):
     chunk_aggregated_data = {
@@ -53,7 +54,14 @@ def process_chunk(chunk, functional_groups):
 class DatasetAnalyzer:
     def __init__(self, data_path, plots_dir, chunksize=10000, num_workers=None):
         self.data_path = data_path
-        self.plots_dir = plots_dir
+
+    # Ensure plots are stored under results/
+        self.plots_dir = (
+            plots_dir
+            if os.path.isabs(plots_dir)
+            else os.path.join(BASE_RESULTS_DIR, plots_dir)
+        )
+
         self.chunksize = chunksize
         self.num_workers = num_workers if num_workers else cpu_count()
         self.aggregated_data = {
@@ -80,9 +88,9 @@ class DatasetAnalyzer:
             "Halogen (F,Cl,Br,I)": "[F,Cl,Br,I]",
         }
         self.fg_counts = {name: 0 for name in self.functional_groups.keys()}
-        if not os.path.exists(self.plots_dir):
-            os.makedirs(self.plots_dir)
-            print(f"Created directory: {self.plots_dir}")
+        os.makedirs(self.plots_dir, exist_ok=True)
+        print(f"Using plots directory: {self.plots_dir}")
+
 
     def run_full_analysis(self):
         print(f"Starting analysis of {self.data_path} with {self.num_workers} workers.")
@@ -198,8 +206,9 @@ if __name__ == "__main__":
         "--plots-dir",
         default="plots",
         type=str,
-        help="Directory to save analysis plots.",
+        help="Plots subdirectory name (saved under results/)",
     )
+
     parser.add_argument(
         "--chunksize",
         type=int,

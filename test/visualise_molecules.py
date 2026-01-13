@@ -6,7 +6,10 @@ import numpy as np
 import pandas as pd
 import umap
 
-from utils import has_max_64_atoms
+from train.utils import has_max_64_atoms
+BASE_DATA_DIR = "data"
+BASE_RESULTS_DIR = "results"
+os.makedirs(BASE_RESULTS_DIR, exist_ok=True)
 
 if not os.path.exists("results"):
     os.makedirs("results")
@@ -22,8 +25,18 @@ parser.add_argument(
     "--data", type=str, required=True, help="Path to the original data file for labels"
 )
 args = parser.parse_args()
-embedding_file = args.embeddings
-data_file = args.data
+embedding_file = (
+    args.embeddings
+    if os.path.isabs(args.embeddings)
+    else os.path.join(BASE_RESULTS_DIR, args.embeddings)
+)
+
+data_file = (
+    args.data
+    if os.path.isabs(args.data)
+    else os.path.join(BASE_DATA_DIR, args.data)
+)
+
 
 results_df = pd.read_pickle(embedding_file)
 print(f"Loaded {len(results_df)} embeddings from pickle file.")
@@ -63,5 +76,6 @@ for prop, label in properties:
     )
     ax.set_xlabel("UMAP Dimension 1")
     ax.set_ylabel("UMAP Dimension 2")
-    plt.savefig(f"results/umap_visualization_{prop}.png")
+    plt.savefig(os.path.join(BASE_RESULTS_DIR, f"umap_visualization_{prop}.png"))
+
     plt.close()

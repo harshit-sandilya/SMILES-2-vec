@@ -4,19 +4,32 @@ import torch
 from sklearn.metrics.pairwise import cosine_similarity
 
 from config import *
-from lightning_model import GraphMoleculeLightning
-from tokenizer import SMILESTokenizer
-from utils import get_single_embedding
+from train.lightning_model import GraphMoleculeLightning
+from preprocess.tokenizer import SMILESTokenizer
+from train.utils import get_single_embedding
+import os
+import json
+
+BASE_DATA_DIR = "data"
+BASE_RESULTS_DIR = "results"
+
 
 parser = ArgumentParser()
 parser.add_argument(
     "--model-file",
     type=str,
-    default="model/final_model.ckpt",
-    help="Path to the final model file",
+    default="final_model.ckpt",
+    help="Model checkpoint filename (loaded from data/ by default)",
 )
+
 args = parser.parse_args()
-model_file = args.model_file
+model_file = (
+    args.model_file
+    if os.path.isabs(args.model_file)
+    else os.path.join("results", "models", args.model_file)
+)
+os.makedirs(BASE_RESULTS_DIR, exist_ok=True)
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 lightning_model = GraphMoleculeLightning.load_from_checkpoint(model_file)
@@ -92,3 +105,38 @@ print(
     f"Ethanol vs. Dimethyl Ether (Functional Isomers) (0.40 - 0.65): {sim_functional_isomers:.4f}"
 )
 print("-----------------------------------")
+
+results = {
+    "homologous": {
+        "pair": ["toluene", "ethylbenzene"],
+        "cosine_similarity": float(sim_homologous),
+    },
+    "isomers": {
+        "pair": ["propanol", "isopropanol"],
+        "cosine_similarity": float(sim_isomers),
+    },
+    "dissimilar": {
+        "pair": ["aspirin", "glucose"],
+        "cosine_similarity": float(sim_dissimilar),
+    },
+    "stereoisomers": {
+        "pair": ["R-alanine", "S-alanine"],
+        "cosine_similarity": float(sim_stereoisomers),
+    },
+    "bioisosteres": {
+        "pair": ["benzoic acid", "nicotinic acid"],
+        "cosine_similarity": float(sim_bioisosteres),
+    },
+    "functional_isomers": {
+        "pair": ["ethanol", "dimethyl ether"],
+        "cosine_similarity": float(sim_functional_isomers),
+    },
+}
+
+output_file = os.path.join(BASE_RESULTS_DIR, "similarity_results.json")
+
+with open(output_file, "w") as f:
+    json.dump(results, f, indent=2)
+
+print(f"\nSaved similarity results to {output_file}")
+

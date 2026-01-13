@@ -23,26 +23,34 @@ from torch_geometric.loader import DataLoader
 from xgboost import XGBClassifier, XGBRegressor
 
 from config import *
-from dataset import MaskedMoleculeDataset
-from lightning_model import GraphMoleculeLightning
-from tokenizer import SMILESTokenizer
+from download.dataset import MaskedMoleculeDataset
+from train.lightning_model import GraphMoleculeLightning
+from preprocess.tokenizer import SMILESTokenizer
+BASE_DATA_DIR = "data"
+BASE_RESULTS_DIR = "results"
 
 RDLogger.DisableLog("rdApp.WARNING")
 warnings.filterwarnings("ignore", category=UserWarning)
 
-if not os.path.exists("results"):
-    os.makedirs("results")
+os.makedirs(BASE_RESULTS_DIR, exist_ok=True)
 
 parser = ArgumentParser()
 parser.add_argument(
     "--model-file",
     type=str,
-    default="model/final_model.ckpt",
-    help="Path to the final model file",
+    default="final_model.ckpt",
+    help="Model checkpoint filename (loaded from data/ by default)",
 )
+
 args = parser.parse_args()
 
-model_file = args.model_file
+# model_file = args.model_file
+model_file = (
+    args.model_file
+    if os.path.isabs(args.model_file)
+    else os.path.join("results", "models", args.model_file)
+)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 lightning_model = GraphMoleculeLightning.load_from_checkpoint(model_file)
 inference_model = lightning_model.model
@@ -286,6 +294,10 @@ for config in BENCHMARK_CONFIG:
                 )
         all_results.append(result_entry)
 
-with open("results/benchmark_results.json", "w") as f:
+results_file = os.path.join(BASE_RESULTS_DIR, "benchmark_results.json")
+
+with open(results_file, "w") as f:
     json.dump(all_results, f, indent=2)
-print("\nSaved final benchmark results to results/benchmark_results.json")
+
+print(f"\nSaved final benchmark results to {results_file}")
+
