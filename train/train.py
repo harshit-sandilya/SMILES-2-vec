@@ -21,8 +21,10 @@ if __name__ == "__main__":
     pl.seed_everything(42)
     datamodule = MoleculeDataModule(
         data_dir=os.path.join(BASE_DATA_DIR, "optimized_graph_dataset"),
-        batch_size=64,
-        num_workers=os.cpu_count() or 1,
+        batch_size=32,
+        # batch_size=64,
+        # num_workers=os.cpu_count() or 1,
+        num_workers=2   ,
     )
     model = GraphMoleculeLightning(
         hidden_dim=hidden_dim, num_layers=num_layers, num_heads=num_heads
@@ -43,7 +45,7 @@ if __name__ == "__main__":
     os.makedirs(BASE_LOGS_DIR, exist_ok=True)
 
     trainer = pl.Trainer(
-        max_epochs=-1,
+        max_epochs=2,
         accelerator="cpu",
         callbacks=[checkpoint_callback, early_stopping_callback],
         logger=tensorboard_logger,
