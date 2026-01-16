@@ -23,7 +23,7 @@ from torch_geometric.loader import DataLoader
 from xgboost import XGBClassifier, XGBRegressor
 
 from config import *
-from download.dataset import MaskedMoleculeDataset
+from preprocess.dataset import MaskedMoleculeDataset
 from train.lightning_model import GraphMoleculeLightning
 from preprocess.tokenizer import SMILESTokenizer
 BASE_DATA_DIR = "data"

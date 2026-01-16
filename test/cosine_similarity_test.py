@@ -1,4 +1,150 @@
+# from argparse import ArgumentParser
+
+# import torch
+# from sklearn.metrics.pairwise import cosine_similarity
+
+# from config import *
+# from train.lightning_model import GraphMoleculeLightning
+# from preprocess.tokenizer import SMILESTokenizer
+# from train.utils import get_single_embedding
+# import os
+# import json
+
+# BASE_DATA_DIR = "data"
+# BASE_RESULTS_DIR = "results"
+
+
+# parser = ArgumentParser()
+# parser.add_argument(
+#     "--model-file",
+#     type=str,
+#     default="final_model.ckpt",
+#     help="Model checkpoint filename (loaded from data/ by default)",
+# )
+
+# args = parser.parse_args()
+# model_file = (
+#     args.model_file
+#     if os.path.isabs(args.model_file)
+#     else os.path.join("results", "models", args.model_file)
+# )
+# os.makedirs(BASE_RESULTS_DIR, exist_ok=True)
+
+
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# lightning_model = GraphMoleculeLightning.load_from_checkpoint(model_file)
+# inference_model = lightning_model.model
+# inference_model.to(device)
+# inference_model.eval()
+# print("Model weights loaded successfully.")
+# tokenizer = SMILESTokenizer()
+
+# # Pair 1: Very Similar (Homologous Series: adding one carbon)
+# mol_toluene = "Cc1ccccc1"
+# mol_ethylbenzene = "CCc1ccccc1"
+
+# # Pair 2: Isomers (Same formula C3H8O, different connectivity)
+# mol_propanol = "CCCO"
+# mol_isopropanol = "CC(C)O"
+
+# # Pair 3: Very Dissimilar (Different size, function, scaffold)
+# mol_aspirin = "CC(=O)OC1=CC=CC=C1C(=O)O"
+# mol_glucose = "C(C1C(C(C(C(O1)O)O)O)O)O"
+
+# # Pair 4: Stereoisomers (Identical graph, different 3D shape)
+# mol_r_alanine = "C[C@H](N)C(=O)O"
+# mol_s_alanine = "C[C@@H](N)C(=O)O"
+
+# # Pair 5: Bioisosteres (Similar function/scaffold, different electronics)
+# mol_benzoic_acid = "c1ccc(C(=O)O)cc1"
+# mol_nicotinic_acid = "c1cnc(C(=O)O)cc1"
+
+# # Pair 6: Functional Group Isomers (Same formula, different function)
+# mol_ethanol = "CCO"
+# mol_dimethyl_ether = "COC"
+
+# emb_toluene = get_single_embedding(mol_toluene, inference_model, tokenizer, device)
+# emb_ethylbenzene = get_single_embedding(
+#     mol_ethylbenzene, inference_model, tokenizer, device
+# )
+# emb_propanol = get_single_embedding(mol_propanol, inference_model, tokenizer, device)
+# emb_isopropanol = get_single_embedding(
+#     mol_isopropanol, inference_model, tokenizer, device
+# )
+# emb_aspirin = get_single_embedding(mol_aspirin, inference_model, tokenizer, device)
+# emb_glucose = get_single_embedding(mol_glucose, inference_model, tokenizer, device)
+# emb_r_alanine = get_single_embedding(mol_r_alanine, inference_model, tokenizer, device)
+# emb_s_alanine = get_single_embedding(mol_s_alanine, inference_model, tokenizer, device)
+# emb_benzoic_acid = get_single_embedding(
+#     mol_benzoic_acid, inference_model, tokenizer, device
+# )
+# emb_nicotinic_acid = get_single_embedding(
+#     mol_nicotinic_acid, inference_model, tokenizer, device
+# )
+# emb_ethanol = get_single_embedding(mol_ethanol, inference_model, tokenizer, device)
+# emb_dimethyl_ether = get_single_embedding(
+#     mol_dimethyl_ether, inference_model, tokenizer, device
+# )
+
+# sim_homologous = cosine_similarity(emb_toluene, emb_ethylbenzene)[0, 0]
+# sim_isomers = cosine_similarity(emb_propanol, emb_isopropanol)[0, 0]
+# sim_dissimilar = cosine_similarity(emb_aspirin, emb_glucose)[0, 0]
+# sim_stereoisomers = cosine_similarity(emb_r_alanine, emb_s_alanine)[0, 0]
+# sim_bioisosteres = cosine_similarity(emb_benzoic_acid, emb_nicotinic_acid)[0, 0]
+# sim_functional_isomers = cosine_similarity(emb_ethanol, emb_dimethyl_ether)[0, 0]
+
+# print("\n--- Cosine Similarity Results ---")
+# print(f"Toluene vs. Ethylbenzene (Homologous) (> 0.95): {sim_homologous:.4f}")
+# print(f"Propanol vs. Isopropanol (Isomers) (0.90 - 0.98):   {sim_isomers:.4f}")
+# print(f"Aspirin vs. Glucose (Dissimilar) (< 0.40):    {sim_dissimilar:.4f}")
+# print(f"R-Alanine vs. S-Alanine (Stereoisomers) (> 0.95): {sim_stereoisomers:.4f}")
+# print(
+#     f"Benzoic Acid vs. Nicotinic Acid (Bioisosteres) (0.75 - 0.90): {sim_bioisosteres:.4f}"
+# )
+# print(
+#     f"Ethanol vs. Dimethyl Ether (Functional Isomers) (0.40 - 0.65): {sim_functional_isomers:.4f}"
+# )
+# print("-----------------------------------")
+
+# results = {
+#     "homologous": {
+#         "pair": ["toluene", "ethylbenzene"],
+#         "cosine_similarity": float(sim_homologous),
+#     },
+#     "isomers": {
+#         "pair": ["propanol", "isopropanol"],
+#         "cosine_similarity": float(sim_isomers),
+#     },
+#     "dissimilar": {
+#         "pair": ["aspirin", "glucose"],
+#         "cosine_similarity": float(sim_dissimilar),
+#     },
+#     "stereoisomers": {
+#         "pair": ["R-alanine", "S-alanine"],
+#         "cosine_similarity": float(sim_stereoisomers),
+#     },
+#     "bioisosteres": {
+#         "pair": ["benzoic acid", "nicotinic acid"],
+#         "cosine_similarity": float(sim_bioisosteres),
+#     },
+#     "functional_isomers": {
+#         "pair": ["ethanol", "dimethyl ether"],
+#         "cosine_similarity": float(sim_functional_isomers),
+#     },
+# }
+
+# output_file = os.path.join(BASE_RESULTS_DIR, "similarity_results.json")
+
+# with open(output_file, "w") as f:
+#     json.dump(results, f, indent=2)
+
+# print(f"\nSaved similarity results to {output_file}")
+
+
+
 from argparse import ArgumentParser
+import os
+import json
 
 import torch
 from sklearn.metrics.pairwise import cosine_similarity
@@ -7,8 +153,7 @@ from config import *
 from train.lightning_model import GraphMoleculeLightning
 from preprocess.tokenizer import SMILESTokenizer
 from train.utils import get_single_embedding
-import os
-import json
+
 
 BASE_DATA_DIR = "data"
 BASE_RESULTS_DIR = "results"
@@ -19,7 +164,7 @@ parser.add_argument(
     "--model-file",
     type=str,
     default="final_model.ckpt",
-    help="Model checkpoint filename (loaded from data/ by default)",
+    help="Model checkpoint filename (loaded from results/models by default)",
 )
 
 args = parser.parse_args()
@@ -28,6 +173,7 @@ model_file = (
     if os.path.isabs(args.model_file)
     else os.path.join("results", "models", args.model_file)
 )
+
 os.makedirs(BASE_RESULTS_DIR, exist_ok=True)
 
 
@@ -36,55 +182,52 @@ lightning_model = GraphMoleculeLightning.load_from_checkpoint(model_file)
 inference_model = lightning_model.model
 inference_model.to(device)
 inference_model.eval()
+
 print("Model weights loaded successfully.")
+
 tokenizer = SMILESTokenizer()
 
-# Pair 1: Very Similar (Homologous Series: adding one carbon)
+# ---------------- Molecule pairs ----------------
+
 mol_toluene = "Cc1ccccc1"
 mol_ethylbenzene = "CCc1ccccc1"
 
-# Pair 2: Isomers (Same formula C3H8O, different connectivity)
 mol_propanol = "CCCO"
 mol_isopropanol = "CC(C)O"
 
-# Pair 3: Very Dissimilar (Different size, function, scaffold)
 mol_aspirin = "CC(=O)OC1=CC=CC=C1C(=O)O"
 mol_glucose = "C(C1C(C(C(C(O1)O)O)O)O)O"
 
-# Pair 4: Stereoisomers (Identical graph, different 3D shape)
 mol_r_alanine = "C[C@H](N)C(=O)O"
 mol_s_alanine = "C[C@@H](N)C(=O)O"
 
-# Pair 5: Bioisosteres (Similar function/scaffold, different electronics)
 mol_benzoic_acid = "c1ccc(C(=O)O)cc1"
 mol_nicotinic_acid = "c1cnc(C(=O)O)cc1"
 
-# Pair 6: Functional Group Isomers (Same formula, different function)
 mol_ethanol = "CCO"
 mol_dimethyl_ether = "COC"
 
+# ---------------- Embeddings ----------------
+
 emb_toluene = get_single_embedding(mol_toluene, inference_model, tokenizer, device)
-emb_ethylbenzene = get_single_embedding(
-    mol_ethylbenzene, inference_model, tokenizer, device
-)
+emb_ethylbenzene = get_single_embedding(mol_ethylbenzene, inference_model, tokenizer, device)
+
 emb_propanol = get_single_embedding(mol_propanol, inference_model, tokenizer, device)
-emb_isopropanol = get_single_embedding(
-    mol_isopropanol, inference_model, tokenizer, device
-)
+emb_isopropanol = get_single_embedding(mol_isopropanol, inference_model, tokenizer, device)
+
 emb_aspirin = get_single_embedding(mol_aspirin, inference_model, tokenizer, device)
 emb_glucose = get_single_embedding(mol_glucose, inference_model, tokenizer, device)
+
 emb_r_alanine = get_single_embedding(mol_r_alanine, inference_model, tokenizer, device)
 emb_s_alanine = get_single_embedding(mol_s_alanine, inference_model, tokenizer, device)
-emb_benzoic_acid = get_single_embedding(
-    mol_benzoic_acid, inference_model, tokenizer, device
-)
-emb_nicotinic_acid = get_single_embedding(
-    mol_nicotinic_acid, inference_model, tokenizer, device
-)
+
+emb_benzoic_acid = get_single_embedding(mol_benzoic_acid, inference_model, tokenizer, device)
+emb_nicotinic_acid = get_single_embedding(mol_nicotinic_acid, inference_model, tokenizer, device)
+
 emb_ethanol = get_single_embedding(mol_ethanol, inference_model, tokenizer, device)
-emb_dimethyl_ether = get_single_embedding(
-    mol_dimethyl_ether, inference_model, tokenizer, device
-)
+emb_dimethyl_ether = get_single_embedding(mol_dimethyl_ether, inference_model, tokenizer, device)
+
+# ---------------- Cosine similarities ----------------
 
 sim_homologous = cosine_similarity(emb_toluene, emb_ethylbenzene)[0, 0]
 sim_isomers = cosine_similarity(emb_propanol, emb_isopropanol)[0, 0]
@@ -93,50 +236,90 @@ sim_stereoisomers = cosine_similarity(emb_r_alanine, emb_s_alanine)[0, 0]
 sim_bioisosteres = cosine_similarity(emb_benzoic_acid, emb_nicotinic_acid)[0, 0]
 sim_functional_isomers = cosine_similarity(emb_ethanol, emb_dimethyl_ether)[0, 0]
 
-print("\n--- Cosine Similarity Results ---")
-print(f"Toluene vs. Ethylbenzene (Homologous) (> 0.95): {sim_homologous:.4f}")
-print(f"Propanol vs. Isopropanol (Isomers) (0.90 - 0.98):   {sim_isomers:.4f}")
-print(f"Aspirin vs. Glucose (Dissimilar) (< 0.40):    {sim_dissimilar:.4f}")
-print(f"R-Alanine vs. S-Alanine (Stereoisomers) (> 0.95): {sim_stereoisomers:.4f}")
-print(
-    f"Benzoic Acid vs. Nicotinic Acid (Bioisosteres) (0.75 - 0.90): {sim_bioisosteres:.4f}"
-)
-print(
-    f"Ethanol vs. Dimethyl Ether (Functional Isomers) (0.40 - 0.65): {sim_functional_isomers:.4f}"
-)
-print("-----------------------------------")
+# ---------------- Expected ranges ----------------
+
+expected_ranges = {
+    "homologous": (0.95, 1.00),
+    "isomers": (0.90, 0.98),
+    "dissimilar": (0.00, 0.40),
+    "stereoisomers": (0.95, 1.00),
+    "bioisosteres": (0.75, 0.90),
+    "functional_isomers": (0.40, 0.65),
+}
+
+# ---------------- Results ----------------
 
 results = {
     "homologous": {
         "pair": ["toluene", "ethylbenzene"],
         "cosine_similarity": float(sim_homologous),
+        "expected_min": expected_ranges["homologous"][0],
+        "expected_max": expected_ranges["homologous"][1],
+        "within_expected_range": bool(
+            expected_ranges["homologous"][0]
+            <= sim_homologous
+            <= expected_ranges["homologous"][1]
+        ),
     },
     "isomers": {
         "pair": ["propanol", "isopropanol"],
         "cosine_similarity": float(sim_isomers),
+        "expected_min": expected_ranges["isomers"][0],
+        "expected_max": expected_ranges["isomers"][1],
+        "within_expected_range": bool(
+            expected_ranges["isomers"][0]
+            <= sim_isomers
+            <= expected_ranges["isomers"][1]
+        ),
     },
     "dissimilar": {
         "pair": ["aspirin", "glucose"],
         "cosine_similarity": float(sim_dissimilar),
+        "expected_min": expected_ranges["dissimilar"][0],
+        "expected_max": expected_ranges["dissimilar"][1],
+        "within_expected_range": bool(
+            expected_ranges["dissimilar"][0]
+            <= sim_dissimilar
+            <= expected_ranges["dissimilar"][1]
+        ),
     },
     "stereoisomers": {
         "pair": ["R-alanine", "S-alanine"],
         "cosine_similarity": float(sim_stereoisomers),
+        "expected_min": expected_ranges["stereoisomers"][0],
+        "expected_max": expected_ranges["stereoisomers"][1],
+        "within_expected_range": bool(
+            expected_ranges["stereoisomers"][0]
+            <= sim_stereoisomers
+            <= expected_ranges["stereoisomers"][1]
+        ),
     },
     "bioisosteres": {
         "pair": ["benzoic acid", "nicotinic acid"],
         "cosine_similarity": float(sim_bioisosteres),
+        "expected_min": expected_ranges["bioisosteres"][0],
+        "expected_max": expected_ranges["bioisosteres"][1],
+        "within_expected_range": bool(
+            expected_ranges["bioisosteres"][0]
+            <= sim_bioisosteres
+            <= expected_ranges["bioisosteres"][1]
+        ),
     },
     "functional_isomers": {
         "pair": ["ethanol", "dimethyl ether"],
         "cosine_similarity": float(sim_functional_isomers),
+        "expected_min": expected_ranges["functional_isomers"][0],
+        "expected_max": expected_ranges["functional_isomers"][1],
+        "within_expected_range": bool(
+            expected_ranges["functional_isomers"][0]
+            <= sim_functional_isomers
+            <= expected_ranges["functional_isomers"][1]
+        ),
     },
 }
 
 output_file = os.path.join(BASE_RESULTS_DIR, "similarity_results.json")
-
 with open(output_file, "w") as f:
     json.dump(results, f, indent=2)
 
 print(f"\nSaved similarity results to {output_file}")
-

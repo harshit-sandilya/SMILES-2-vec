@@ -1,174 +1,312 @@
 import os
-import torch
-import pandas as pd
+import json
 import numpy as np
-from torch_geometric.loader import DataLoader
-from argparse import ArgumentParser
-from multiprocessing import Pool, cpu_count, set_start_method
+import torch
+import matplotlib.pyplot as plt
+import pandas as pd
 from tqdm import tqdm
 from pathlib import Path
+from sklearn.decomposition import PCA
+from torch_geometric.loader import DataLoader
 
-from config import *
-from download.dataset import MaskedMoleculeDataset
-from train.lightning_model import GraphMoleculeLightning
+from train.lightning_model_GIN import GraphMoleculeLightningGIN
+from preprocess.dataset import MaskedMoleculeDataset
 from preprocess.tokenizer import SMILESTokenizer
 from train.utils import has_max_64_atoms
 
-# ==============================
-# Resolve project paths
-# ==============================
 
+# ==============================
+# Resolve paths
+# ==============================
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 RESULTS_DIR = PROJECT_ROOT / "results"
-EMBEDDINGS_DIR = RESULTS_DIR / "embeddings"
 MODELS_DIR = RESULTS_DIR / "models"
 
-EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
 
-# ==============================
-# Global vars for multiprocessing
-# ==============================
-
-_model = None
-_tokenizer = None
-_device = None
-
-
-def init_worker(model_file):
-    global _model, _tokenizer, _device
-    _device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    lightning_model = GraphMoleculeLightning.load_from_checkpoint(model_file)
-    _model = lightning_model.model.to(_device).eval()
-    _tokenizer = SMILESTokenizer()
-
-
-def process_chunk(args):
-    chunk_id, chunk_df = args
-    global _model, _tokenizer, _device
-
-    chunk_df["valid_smiles"] = chunk_df["smiles"].apply(has_max_64_atoms)
-    filtered = chunk_df[chunk_df["valid_smiles"]].drop(columns=["valid_smiles"])
-
-    if len(filtered) == 0:
-        return None
-
-    smiles_list = filtered["smiles"].tolist()
-    tokenized = [_tokenizer.tokenize(s) for s in smiles_list]
-
-    dataset = MaskedMoleculeDataset(
-        tokenized,
-        mask_ratio_atoms=0.0,
-        mask_ratio_bonds=0.0,
-    )
-
-    loader = DataLoader(dataset, batch_size=64, shuffle=False)
-
-    chunk_embeddings = []
-
-    with torch.no_grad():
-        for batch in loader:
-            batch = batch.to(_device)
-            emb = _model.get_embedding(batch)
-            chunk_embeddings.append(emb.cpu().numpy())
-
-    final_embeddings = np.concatenate(chunk_embeddings, axis=0)
-
-    chunk_df = pd.DataFrame(
-        {"smiles": smiles_list, "embedding": list(final_embeddings)}
-    )
-
-    output_file = EMBEDDINGS_DIR / f"chunk_{chunk_id:03d}.pkl"
-    chunk_df.to_pickle(output_file)
-
-    return output_file
+def diagnose_embeddings(embeddings):
+    """Diagnose embedding quality."""
+    print(f"\n{'='*70}")
+    print("EMBEDDING DIAGNOSTICS")
+    print(f"{'='*70}")
+    
+    print(f"Shape: {embeddings.shape}")
+    print(f"\nBasic Statistics:")
+    print(f"  Mean:   {embeddings.mean():.6f}")
+    print(f"  Std:    {embeddings.std():.6f}")
+    print(f"  Min:    {embeddings.min():.6f}")
+    print(f"  Max:    {embeddings.max():.6f}")
+    
+    print(f"\nData Quality:")
+    print(f"  Contains NaN: {np.isnan(embeddings).any()}")
+    print(f"  Contains Inf: {np.isinf(embeddings).any()}")
+    print(f"  Fraction zeros: {(embeddings == 0).sum() / embeddings.size:.4%}")
+    
+    # Check uniqueness
+    unique_embeddings = np.unique(embeddings, axis=0)
+    print(f"\nUniqueness:")
+    print(f"  Unique embeddings: {len(unique_embeddings)}/{len(embeddings)}")
+    print(f"  Duplicate rate: {(1 - len(unique_embeddings)/len(embeddings)):.2%}")
+    
+    # Per-dimension variance
+    per_dim_std = embeddings.std(axis=0)
+    print(f"\nPer-dimension variance:")
+    print(f"  Mean std: {per_dim_std.mean():.6f}")
+    print(f"  Dims with std < 0.001: {(per_dim_std < 0.001).sum()}/{len(per_dim_std)}")
+    
+    # Sample embeddings
+    print(f"\nFirst 3 embeddings (first 10 dims):")
+    for i in range(min(3, len(embeddings))):
+        print(f"  [{i}] {embeddings[i][:10]}")
+    
+    # Health check
+    if embeddings.std() < 0.01:
+        print(f"\n❌ CRITICAL: std < 0.01 - embeddings lack variation")
+        return False
+    if len(unique_embeddings) < len(embeddings) * 0.1:
+        print(f"\n❌ CRITICAL: >90% duplicates - model not learning")
+        return False
+    
+    print(f"\n✅ Embeddings look healthy!")
+    return True
 
 
-def chunk_generator(file_path, chunk_size):
-    for i, chunk in enumerate(pd.read_csv(file_path, chunksize=chunk_size)):
-        yield i, chunk
+def plot_colored(embeddings_2d, values, name, output_dir, method="PCA"):
+    """Plot embeddings colored by property."""
+    values = values.to_numpy()
+    valid_mask = ~np.isnan(values)
+    
+    print(f"  {name}: {valid_mask.sum()} valid, {(~valid_mask).sum()} missing")
+
+    plt.figure(figsize=(12, 9))
+
+    # Plot missing values (grey)
+    if (~valid_mask).sum() > 0:
+        plt.scatter(
+            embeddings_2d[~valid_mask, 0],
+            embeddings_2d[~valid_mask, 1],
+            s=20,
+            alpha=0.3,
+            color="lightgrey",
+            label=f"missing (n={~valid_mask.sum()})",
+            edgecolors='none'
+        )
+
+    # Plot available values (colored)
+    if valid_mask.sum() > 0:
+        sc = plt.scatter(
+            embeddings_2d[valid_mask, 0],
+            embeddings_2d[valid_mask, 1],
+            c=values[valid_mask],
+            cmap="viridis",
+            s=25,
+            alpha=0.7,
+            label=f"available (n={valid_mask.sum()})",
+            edgecolors='none'
+        )
+        plt.colorbar(sc, label=name, fraction=0.046, pad=0.04)
+
+    plt.title(f"GIN Embeddings ({method}) - {name}\n{len(embeddings_2d)} molecules")
+    plt.xlabel(f"{method}-1")
+    plt.ylabel(f"{method}-2")
+    plt.legend(markerscale=1.5, frameon=True, loc='upper right')
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"{method.lower()}_{name}.png"), 
+                dpi=300, bbox_inches='tight')
+    plt.close()
 
 
 def main():
-    parser = ArgumentParser()
+    output_dir = RESULTS_DIR / "plots_GIN"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    parser.add_argument(
-        "--model-file",
-        type=str,
-        default="final_model.ckpt",
-        help="Checkpoint filename (loaded from results/models/)",
+    print(f"{'='*70}")
+    print("GIN MOLECULAR EMBEDDING VISUALIZATION")
+    print(f"{'='*70}")
+
+    # ============================================================
+    # LOAD MODEL (same as generate_embeddings.py)
+    # ============================================================
+    checkpoint_path = MODELS_DIR / "final_model_GIN.ckpt"
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"\nDevice: {device}")
+
+    lightning_model = GraphMoleculeLightningGIN.load_from_checkpoint(str(checkpoint_path))
+    model = lightning_model.model.to(device)
+    model.eval()
+    print(f"✅ Loaded model from {checkpoint_path}")
+
+    # ============================================================
+    # LOAD DATA (same as generate_embeddings.py)
+    # ============================================================
+    data_file = DATA_DIR / "canonical_smiles_subset_10k.csv"
+    print(f"\n{'='*70}")
+    print("LOADING AND PROCESSING DATA")
+    print(f"{'='*70}")
+    print(f"Reading: {data_file}")
+    
+    df = pd.read_csv(data_file)
+    print(f"Original dataset: {len(df)} molecules")
+    
+    # Filter molecules (same as generate_embeddings.py)
+    print("\nFiltering molecules...")
+    df["valid_smiles"] = df["smiles"].apply(has_max_64_atoms)
+    filtered_df = df[df["valid_smiles"]].copy()
+    print(f"After filtering: {len(filtered_df)} molecules ({len(df) - len(filtered_df)} removed)")
+    
+    # Store original indices for alignment
+    original_indices = filtered_df.index.to_numpy()
+    print(f"✅ Saved original indices for property alignment")
+    
+    # ============================================================
+    # TOKENIZE AND CREATE DATASET (same as generate_embeddings.py)
+    # ============================================================
+    tokenizer = SMILESTokenizer()
+    smiles_list = filtered_df["smiles"].tolist()
+    
+    print(f"\nTokenizing {len(smiles_list)} SMILES...")
+    tokenized = [tokenizer.tokenize(s) for s in tqdm(smiles_list, desc="Tokenizing")]
+    
+    dataset = MaskedMoleculeDataset(
+        tokenized,
+        mask_ratio_atoms=0.0,  # No masking for visualization
+        mask_ratio_bonds=0.0,
     )
-    parser.add_argument(
-        "--data-file",
-        type=str,
-        default="canonical_smiles_subset_10k.csv",
-        help="CSV filename inside data/",
+    
+    loader = DataLoader(dataset, batch_size=64, shuffle=False)
+    print(f"✅ Created dataset with {len(dataset)} molecules")
+
+    # ============================================================
+    # EXTRACT EMBEDDINGS (same as generate_embeddings.py)
+    # ============================================================
+    print(f"\n{'='*70}")
+    print("EXTRACTING EMBEDDINGS")
+    print(f"{'='*70}")
+    
+    all_embeddings = []
+    
+    with torch.no_grad():
+        for batch in tqdm(loader, desc="Processing batches"):
+            batch = batch.to(device)
+            emb = model.get_embedding(batch)
+            all_embeddings.append(emb.cpu().numpy())
+
+    embeddings = np.concatenate(all_embeddings, axis=0)
+    print(f"✅ Extracted {embeddings.shape[0]} embeddings (dim={embeddings.shape[1]})")
+
+    # Save embeddings
+    np.save(output_dir / "embeddings.npy", embeddings)
+
+    # ============================================================
+    # DIAGNOSE EMBEDDINGS
+    # ============================================================
+    embeddings_healthy = diagnose_embeddings(embeddings)
+    
+    if not embeddings_healthy:
+        print(f"\n{'='*70}")
+        print("⚠️  STOPPING: Fix embedding issues first")
+        print(f"{'='*70}")
+        print("\n🔧 Check:")
+        print("1. Is model.get_embedding() returning the right layer?")
+        print("2. Was the model actually trained?")
+        print("3. Are model weights loaded correctly?")
+        return
+
+    # ============================================================
+    # ALIGN PROPERTIES WITH EMBEDDINGS
+    # ============================================================
+    print(f"\n{'='*70}")
+    print("ALIGNING PROPERTIES")
+    print(f"{'='*70}")
+    
+    # Use the filtered dataframe with correct alignment
+    props_df = filtered_df[["molecular_weight", "logp", "hba", "hbd"]].reset_index(drop=True)
+    
+    assert len(props_df) == len(embeddings), \
+        f"Mismatch: {len(props_df)} properties vs {len(embeddings)} embeddings"
+    
+    print(f"✅ Properties perfectly aligned: {len(props_df)} rows")
+    
+    # Property completeness
+    print("\nProperty completeness:")
+    properties = ["molecular_weight", "logp", "hba", "hbd"]
+    for prop in properties:
+        valid = props_df[prop].notna().sum()
+        print(f"  {prop}: {valid}/{len(props_df)} ({100*valid/len(props_df):.1f}%)")
+
+    # ============================================================
+    # DIMENSIONALITY REDUCTION
+    # ============================================================
+    print(f"\n{'='*70}")
+    print("DIMENSIONALITY REDUCTION: PCA")
+    print(f"{'='*70}")
+    
+    reducer = PCA(n_components=2, random_state=42)
+    embeddings_2d = reducer.fit_transform(embeddings)
+    print(f"Explained variance: {reducer.explained_variance_ratio_.sum():.2%}")
+
+    # ============================================================
+    # VISUALIZATIONS
+    # ============================================================
+    print(f"\n{'='*70}")
+    print("GENERATING VISUALIZATIONS")
+    print(f"{'='*70}")
+    
+    # Plain plot
+    plt.figure(figsize=(12, 9))
+    scatter = plt.scatter(
+        embeddings_2d[:, 0],
+        embeddings_2d[:, 1],
+        s=20,
+        alpha=0.6,
+        c=range(len(embeddings_2d)),
+        cmap='viridis',
+        edgecolors='none'
     )
-    parser.add_argument("--chunk-size", type=int, default=5000)
-    parser.add_argument(
-        "--output",
-        type=str,
-        default="molecule_embeddings.pkl",
-        help="Final output filename inside results/embeddings/",
-    )
+    plt.colorbar(scatter, label='Molecule index', fraction=0.046, pad=0.04)
+    plt.title(f"GIN Molecular Embeddings (PCA)\n{len(embeddings)} molecules")
+    plt.xlabel("PCA-1")
+    plt.ylabel("PCA-2")
+    plt.tight_layout()
+    plt.savefig(output_dir / "pca_plain.png", dpi=300, bbox_inches='tight')
+    plt.close()
+    print("✅ Saved plain PCA plot")
 
-    args = parser.parse_args()
+    # Property-colored plots
+    print("\nGenerating property-colored plots:")
+    for prop in properties:
+        plot_colored(embeddings_2d, props_df[prop], prop, output_dir, "PCA")
 
-    model_file = (
-        Path(args.model_file)
-        if Path(args.model_file).is_absolute()
-        else MODELS_DIR / args.model_file
-    )
+    # ============================================================
+    # SAVE METADATA
+    # ============================================================
+    metadata = {
+        "model": "GIN",
+        "num_molecules_original": len(df),
+        "num_molecules_filtered": len(embeddings),
+        "num_filtered_out": len(df) - len(embeddings),
+        "embedding_dim": int(embeddings.shape[1]),
+        "reduction_method": "PCA",
+        "explained_variance": float(reducer.explained_variance_ratio_.sum()),
+        "checkpoint": str(checkpoint_path),
+        "properties": properties,
+        "embeddings_healthy": embeddings_healthy,
+    }
 
-    data_file = (
-        Path(args.data_file)
-        if Path(args.data_file).is_absolute()
-        else DATA_DIR / args.data_file
-    )
+    with open(output_dir / "metadata.json", "w") as f:
+        json.dump(metadata, f, indent=2)
 
-    print(f"📄 Dataset : {data_file}")
-    print(f"🧠 Model   : {model_file}")
-    print(f"⚙️  Workers : {cpu_count() // 3}")
-
-    with Pool(
-        processes=max(1, cpu_count() // 3),
-        initializer=init_worker,
-        initargs=(str(model_file),),
-    ) as pool:
-        output_files = list(
-            tqdm(
-                pool.imap(
-                    process_chunk,
-                    chunk_generator(data_file, args.chunk_size),
-                ),
-                desc="Generating embeddings",
-            )
-        )
-
-    # Merge chunks
-    print("📦 Merging chunk embeddings...")
-    all_dfs = [pd.read_pickle(f) for f in output_files if f is not None]
-    final_df = pd.concat(all_dfs, ignore_index=True)
-
-    final_output = (
-        Path(args.output)
-        if Path(args.output).is_absolute()
-        else EMBEDDINGS_DIR / args.output
-    )
-
-    final_df.to_pickle(final_output)
-
-    print(f"✅ Saved embeddings to: {final_output}")
-    print(
-        f"📊 Total molecules: {len(final_df)} | "
-        f"Embedding shape: {np.stack(final_df.embedding).shape}"
-    )
+    print(f"\n{'='*70}")
+    print(f"✅ ALL VISUALIZATIONS SAVED TO: {output_dir}")
+    print(f"{'='*70}")
+    print("\nGenerated files:")
+    print("  - embeddings.npy")
+    print("  - pca_plain.png")
+    for prop in properties:
+        print(f"  - pca_{prop}.png")
+    print("  - metadata.json")
+    print(f"\n{'='*70}")
 
 
 if __name__ == "__main__":
-    try:
-        set_start_method("spawn")
-    except RuntimeError:
-        pass
     main()

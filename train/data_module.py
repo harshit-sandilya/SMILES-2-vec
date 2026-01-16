@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import pytorch_lightning as pl
@@ -7,9 +6,10 @@ from lightning.data import StreamingDataset
 from torch.utils.data import random_split
 from torch_geometric.loader import DataLoader
 
-from preprocess.optimise_dataset import PROJECT_ROOT
-# BASE_DATA_DIR = "data"
+
+# ---------------- Project root ----------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 
 class MoleculeDataModule(pl.LightningDataModule):
     def __init__(self, data_dir: str, batch_size: int = 256, num_workers: int = 4):
@@ -24,8 +24,7 @@ class MoleculeDataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.generator = torch.Generator().manual_seed(42)
 
-    def setup(self, stage: str):
-        # full_dataset = StreamingDataset(input_dir=self.data_dir)
+    def setup(self, stage: str | None = None):
         full_dataset = StreamingDataset(input_dir=str(self.data_dir))
 
         self.train_dataset, self.val_dataset = random_split(
@@ -34,14 +33,15 @@ class MoleculeDataModule(pl.LightningDataModule):
             generator=self.generator,
         )
 
-    def train_dataloader(self):
+    def full_dataloader(self):
+        full_dataset = StreamingDataset(input_dir=str(self.data_dir))
         return DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-            persistent_workers=True,
-        )
+        full_dataset,
+        batch_size=self.batch_size,
+        num_workers=self.num_workers,
+        shuffle=False,
+    )
+
 
     def val_dataloader(self):
         return DataLoader(
@@ -50,3 +50,4 @@ class MoleculeDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             persistent_workers=True,
         )
+
