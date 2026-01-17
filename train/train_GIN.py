@@ -57,7 +57,7 @@ if __name__ == "__main__":
 
     # ---------------- Trainer ----------------
     trainer = pl.Trainer(
-        max_epochs=10,
+        max_epochs=2,
         accelerator="cpu",
         callbacks=[checkpoint_callback, early_stopping_callback],
         logger=tensorboard_logger,

@@ -7,7 +7,6 @@ from torch.utils.data import random_split
 from torch_geometric.loader import DataLoader
 
 
-# ---------------- Project root ----------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -33,21 +32,30 @@ class MoleculeDataModule(pl.LightningDataModule):
             generator=self.generator,
         )
 
-    def full_dataloader(self):
-        full_dataset = StreamingDataset(input_dir=str(self.data_dir))
+    def train_dataloader(self):
         return DataLoader(
-        full_dataset,
-        batch_size=self.batch_size,
-        num_workers=self.num_workers,
-        shuffle=False,
-    )
-
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            persistent_workers=False,
+        )
 
     def val_dataloader(self):
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
+            shuffle=False,
             num_workers=self.num_workers,
-            persistent_workers=True,
+            persistent_workers=False,
+        )
+
+    def full_dataloader(self):
+        full_dataset = StreamingDataset(input_dir=str(self.data_dir))
+        return DataLoader(
+            full_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
         )
 

@@ -8,7 +8,9 @@ from tqdm import tqdm
 from pathlib import Path
 from sklearn.decomposition import PCA
 from torch_geometric.loader import DataLoader
-
+from torch_geometric.data import Batch
+from preprocess import dataset
+from train import model
 from train.lightning_model_GIN import GraphMoleculeLightningGIN
 from preprocess.dataset import MaskedMoleculeDataset
 from preprocess.tokenizer import SMILESTokenizer
@@ -172,6 +174,7 @@ def main():
         mask_ratio_atoms=0.0,  # No masking for visualization
         mask_ratio_bonds=0.0,
     )
+
     
     loader = DataLoader(dataset, batch_size=64, shuffle=False)
     print(f"✅ Created dataset with {len(dataset)} molecules")
@@ -184,15 +187,23 @@ def main():
     print(f"{'='*70}")
     
     all_embeddings = []
-    
+
     with torch.no_grad():
-        for batch in tqdm(loader, desc="Processing batches"):
-            batch = batch.to(device)
+        for data in tqdm(dataset, desc="Embedding molecules"):
+            data = data.to(device)
+
+        # add fake batch dimension (1 graph)
+            batch = Batch.from_data_list([data])
             emb = model.get_embedding(batch)
+
             all_embeddings.append(emb.cpu().numpy())
 
-    embeddings = np.concatenate(all_embeddings, axis=0)
+        embeddings = np.concatenate(all_embeddings, axis=0)
+        
     print(f"✅ Extracted {embeddings.shape[0]} embeddings (dim={embeddings.shape[1]})")
+    print("Total SMILES in CSV:", len(df))
+    print("Total embeddings generated:", embeddings.shape[0])
+
 
     # Save embeddings
     np.save(output_dir / "embeddings.npy", embeddings)
