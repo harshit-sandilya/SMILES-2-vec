@@ -14,3 +14,5 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 hidden_dim = 512
 num_layers = 8
 num_heads = 12
+learning_rate = 1e-4
+

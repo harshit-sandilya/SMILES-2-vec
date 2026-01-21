@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GINEConv, global_add_pool
+from torch_geometric.nn import GINEConv
 from torch_geometric.nn.aggr import AttentionalAggregation
 
 
@@ -74,7 +74,7 @@ class GraphMoleculeModelGIN(nn.Module):
         return predicted_atom_logits, predicted_bond_logits
 
     # ====================================================
-    # Embedding extraction (used for cosine similarity)
+    # Embedding extraction (original API)
     # ====================================================
     def get_embedding(self, data):
         x, edge_index, edge_attr, batch_idx = (
@@ -90,7 +90,15 @@ class GraphMoleculeModelGIN(nn.Module):
         for conv in self.gnn_layers:
             x = x + F.relu(conv(x, edge_index, edge_attr))
 
-        # Graph-level embedding
         molecule_embedding = self.pool(x, batch_idx)
-
         return molecule_embedding
+
+    # ====================================================
+    # Graph-level embedding (GCN/GAT-compatible API) ✅ NEW
+    # ====================================================
+    def get_graph_embedding(self, data):
+        """
+        Alias for get_embedding() to keep a unified interface
+        across GCN / GIN / GAT models.
+        """
+        return self.get_embedding(data)

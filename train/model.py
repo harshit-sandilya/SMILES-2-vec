@@ -33,7 +33,7 @@ class GraphMoleculeModel(nn.Module):
                     dropout=0.1,
                 )
             )
-            # 🔧 FIX 2: normalization per layer
+            # FIX 2: normalization per layer
             self.norm_layers.append(nn.LayerNorm(hidden_dim))
 
         # Graph pooling

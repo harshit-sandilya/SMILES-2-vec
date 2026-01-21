@@ -26,10 +26,10 @@ BASE_RESULTS_DIR = "results"
 EMBEDDINGS_FILE = os.path.join(
     BASE_RESULTS_DIR,
     "embeddings",
-    "gin_embeddings_10k.npy",
+    "gcn_embeddings_10k.npy",
 )
 
-PLOTS_DIR = os.path.join(BASE_RESULTS_DIR, "plots_GIN")
+PLOTS_DIR = os.path.join(BASE_RESULTS_DIR, "plots_GCN")
 os.makedirs(PLOTS_DIR, exist_ok=True)
 
 # =====================================================
@@ -64,7 +64,7 @@ print(f"🧠 Embeddings file : {EMBEDDINGS_FILE}")
 # =====================================================
 if not os.path.exists(EMBEDDINGS_FILE):
     raise FileNotFoundError(
-        f"❌ GIN embeddings not found at: {EMBEDDINGS_FILE}"
+        f"❌ GCN embeddings not found at: {EMBEDDINGS_FILE}"
     )
 
 embeddings = np.load(EMBEDDINGS_FILE)
@@ -147,13 +147,13 @@ for prop, label in properties:
     cbar.set_label(label, rotation=270, labelpad=15)
 
     ax.set_title(
-        f"GIN Embeddings (10k), colored by {label}",
+        f"GCN Embeddings (10k), colored by {label}",
         fontsize=16,
     )
     ax.set_xlabel("UMAP-1")
     ax.set_ylabel("UMAP-2")
 
-    out_file = os.path.join(PLOTS_DIR, f"umap_gin_10k_{prop}.png")
+    out_file = os.path.join(PLOTS_DIR, f"umap_gcn_10k_{prop}.png")
     plt.savefig(out_file, dpi=300, bbox_inches="tight")
     plt.close()
 
@@ -162,6 +162,6 @@ for prop, label in properties:
 # =====================================================
 # Final confirmation
 # =====================================================
-print("\n📂 Files in results/plots_GIN:")
+print("\n📂 Files in results/plots_GCN:")
 print(os.listdir(PLOTS_DIR))
-print("🎉 GIN visualization pipeline completed successfully.")
+print("🎉 GCN visualization pipeline completed successfully.")

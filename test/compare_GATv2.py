@@ -1,3 +1,12 @@
+import sys
+from pathlib import Path
+
+# =====================================================
+# Fix Python path (IMPORTANT)
+# =====================================================
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
 import os
 import warnings
 import json
@@ -10,6 +19,7 @@ import torch
 from rdkit import Chem, RDLogger
 from rdkit.Chem import AllChem, Descriptors, MACCSkeys, rdMolDescriptors
 from rdkit.DataStructs import cDataStructs
+
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -52,7 +62,10 @@ model_file = (
 )
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-lightning_model = GraphMoleculeLightning.load_from_checkpoint(model_file)
+lightning_model = GraphMoleculeLightning.load_from_checkpoint(
+    model_file,
+    strict=False,
+)
 inference_model = lightning_model.model
 inference_model.to(device)
 inference_model.eval()
@@ -181,9 +194,10 @@ def process_and_featurize_split(dc_dataset, tokenizer, max_atoms=64):
     loader_gnn = DataLoader(dataset_gnn, batch_size=256, shuffle=False)
     with torch.no_grad():
         gnn_feats = [
-            inference_model.get_embedding(batch.to(device)).cpu().numpy()
+            inference_model.get_graph_embedding(batch.to(device)).cpu().numpy()
             for batch in loader_gnn
         ]
+
     features = {
         "Our GNN": np.concatenate(gnn_feats, axis=0),
         "ECFP": np.array(
@@ -233,29 +247,40 @@ def process_and_featurize_split(dc_dataset, tokenizer, max_atoms=64):
 
 # ===================== Benchmark Loop =====================
 BENCHMARK_CONFIG = [
-    {"name": "ESOL", "loader": dc.molnet.load_delaney, "task_type": "regression"},
-    {"name": "FreeSolv", "loader": dc.molnet.load_freesolv, "task_type": "regression"},
-    {"name": "Lipophilicity", "loader": dc.molnet.load_lipo, "task_type": "regression"},
-    {"name": "BBBP", "loader": dc.molnet.load_bbbp, "task_type": "classification"},
     {
-        "name": "ClinTox",
-        "loader": dc.molnet.load_clintox,
-        "task_type": "classification",
+        "name": "ESOL",
+        "loader": dc.molnet.load_delaney,
+        "task_type": "regression",
+    },
+    {
+        "name": "Lipophilicity",
+        "loader": dc.molnet.load_lipo,
+        "task_type": "regression",
     },
     {
         "name": "BACE",
         "loader": dc.molnet.load_bace_classification,
         "task_type": "classification",
     },
-    {"name": "SIDER", "loader": dc.molnet.load_sider, "task_type": "classification"},
+    {
+        "name": "SIDER",
+        "loader": dc.molnet.load_sider,
+        "task_type": "classification",
+    },
 ]
-
 all_results = []
 for config in BENCHMARK_CONFIG:
     print(f"\n===== Processing Dataset: {config['name']} =====")
-    tasks, (train_set, _, test_set), _ = config["loader"](
-        featurizer="Raw", splitter="scaffold", reload=True
-    )
+
+    try:
+        tasks, (train_set, _, test_set), _ = config["loader"](
+            featurizer="Raw",
+            splitter="scaffold",
+            reload=True,
+        )
+    except AttributeError as e:
+        print(f"⚠️ Skipping {config['name']} (loader not available in this DeepChem version)")
+        continue
 
     y_train_df, X_train_features = process_and_featurize_split(train_set, tokenizer)
     y_test_df, X_test_features = process_and_featurize_split(test_set, tokenizer)

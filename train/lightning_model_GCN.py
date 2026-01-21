@@ -1,9 +1,10 @@
 import pytorch_lightning as pl
-from train.models.model_GIN import GraphMoleculeModelGIN
-from config import ATOM_VOCAB_SIZE, BOND_VOCAB_SIZE
+import torch
 
+from train.models.model_GCN import GraphMoleculeGCN
+from config import ATOM_VOCAB_SIZE
 
-class GraphMoleculeLightningGIN(pl.LightningModule):
+class GraphMoleculeLightningGCN(pl.LightningModule):
     def __init__(
         self,
         hidden_dim: int,
@@ -12,25 +13,26 @@ class GraphMoleculeLightningGIN(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.model = GraphMoleculeModelGIN(
+        self.model = GraphMoleculeGCN(
             hidden_dim=hidden_dim,
             num_layers=num_layers,
             ATOM_VOCAB_SIZE=ATOM_VOCAB_SIZE,
-            BOND_VOCAB_SIZE=BOND_VOCAB_SIZE,
         )
 
     # --------------------------------------------------
-    # Inference only
+    # Forward (optional, not used for training)
     # --------------------------------------------------
     def forward(self, batch):
-        return self.model.get_embedding(batch)
-
-    def get_embedding(self, batch):
-        return self.model.get_embedding(batch)
+        return self.model.get_graph_embedding(batch)
 
     # --------------------------------------------------
-    # No optimizer (same as GCN)
+    # Inference helper (explicit & clean)
+    # --------------------------------------------------
+    def get_graph_embedding(self, batch):
+        return self.model.get_graph_embedding(batch)
+
+    # --------------------------------------------------
+    # No optimizers needed (inference-only)
     # --------------------------------------------------
     def configure_optimizers(self):
         return None
-
