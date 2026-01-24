@@ -8,6 +8,9 @@ from pytorch_lightning.callbacks import EarlyStopping
 from config import *
 from train.data_module import MoleculeDataModule
 from train.lightning_model import GraphMoleculeLightning
+import torch
+torch.cuda.empty_cache()
+
 BASE_DATA_DIR = "data"
 BASE_RESULTS_DIR = "results"
 BASE_MODELS_DIR = os.path.join(BASE_RESULTS_DIR, "models")
@@ -21,7 +24,7 @@ if __name__ == "__main__":
     pl.seed_everything(42)
     datamodule = MoleculeDataModule(
         data_dir=os.path.join(BASE_DATA_DIR, "optimized_graph_dataset"),
-        batch_size=32,
+        batch_size=8,
         # batch_size=64,
         # num_workers=os.cpu_count() or 1,
         num_workers=2   ,
@@ -45,13 +48,14 @@ if __name__ == "__main__":
     os.makedirs(BASE_LOGS_DIR, exist_ok=True)
 
     trainer = pl.Trainer(
-        max_epochs=2,
-        accelerator="cpu",
+        max_epochs=30,
+        accelerator="gpu",
+        devices=1,
         callbacks=[checkpoint_callback, early_stopping_callback],
         logger=tensorboard_logger,
         log_every_n_steps=10,
     )
-    print("Starting training on CPU...")
+    # print("Starting training on CPU...")
     trainer.fit(model, datamodule=datamodule)
     print("Training completed.")
 
