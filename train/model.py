@@ -75,6 +75,22 @@ class GraphMoleculeModel(nn.Module):
         predicted_bond_logits = self.predict_bond(atom_pair_features)
 
         return predicted_atom_logits, predicted_bond_logits
+    
+    def get_embedding(self, batch):
+        """
+        Returns a graph-level embedding for cosine similarity.
+        """
+        _, _, graph_emb = self.forward(batch)
+        return graph_emb
+
+        # If shape is [num_nodes, hidden_dim]
+        # convert to one vector per molecule
+        if atom_logits.dim() == 2:
+            emb = atom_logits.mean(dim=0, keepdim=True)
+        else:
+            emb = atom_logits
+
+        return emb
 
     # --------------------------------------------------
     # Graph-level embedding (used for visualization / similarity)

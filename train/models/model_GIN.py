@@ -19,8 +19,9 @@ class GraphMoleculeModelGIN(nn.Module):
         self.atom_embedder = nn.Embedding(ATOM_VOCAB_SIZE, hidden_dim)
         self.bond_embedder = nn.Embedding(BOND_VOCAB_SIZE, hidden_dim)
 
-        # ---------------- GIN layers ----------------
+        # ---------------- GIN layers + LayerNorm ----------------  # FIX #6
         self.gnn_layers = nn.ModuleList()
+        self.layer_norms = nn.ModuleList()
 
         for _ in range(num_layers):
             mlp = nn.Sequential(
@@ -28,13 +29,13 @@ class GraphMoleculeModelGIN(nn.Module):
                 nn.ReLU(),
                 nn.Linear(hidden_dim, hidden_dim),
             )
-
             conv = GINEConv(
                 nn=mlp,
                 edge_dim=hidden_dim,
                 train_eps=True,
             )
             self.gnn_layers.append(conv)
+            self.layer_norms.append(nn.LayerNorm(hidden_dim))
 
         # ---------------- Pooling ----------------
         self.pool = AttentionalAggregation(
@@ -50,18 +51,31 @@ class GraphMoleculeModelGIN(nn.Module):
         self.predict_bond = nn.Linear(hidden_dim * 2, BOND_VOCAB_SIZE)
 
     # ====================================================
+    # Shared message-passing core                         # FIX #7
+    # ====================================================
+    def _message_passing(self, x, edge_index, edge_attr):
+        """
+        Embed raw integer features, run GIN layers with residual
+        connections and layer norm, return final node embeddings.
+        """
+        # FIX #8: use .view(-1) instead of .squeeze() to avoid
+        # collapsing batch dim when batch_size=1 or num_atoms=1.
+        # Also enforce long dtype so nn.Embedding doesn't crash.
+        x = self.atom_embedder(x.view(-1).long())
+        edge_attr = self.bond_embedder(edge_attr.long())
+
+        for conv, ln in zip(self.gnn_layers, self.layer_norms):
+            x = ln(x + F.relu(conv(x, edge_index, edge_attr)))   # FIX #6
+
+        return x
+
+    # ====================================================
     # Forward pass (used during masked training)
     # ====================================================
     def forward(self, data):
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
 
-        # Embed atoms & bonds
-        x = self.atom_embedder(x.squeeze())
-        edge_attr = self.bond_embedder(edge_attr)
-
-        # GIN message passing
-        for conv in self.gnn_layers:
-            x = x + F.relu(conv(x, edge_index, edge_attr))
+        x = self._message_passing(x, edge_index, edge_attr)      # FIX #7
 
         # Atom prediction
         predicted_atom_logits = self.predict_atom(x)
@@ -74,7 +88,7 @@ class GraphMoleculeModelGIN(nn.Module):
         return predicted_atom_logits, predicted_bond_logits
 
     # ====================================================
-    # Embedding extraction (original API)
+    # Embedding extraction
     # ====================================================
     def get_embedding(self, data):
         x, edge_index, edge_attr, batch_idx = (
@@ -84,21 +98,13 @@ class GraphMoleculeModelGIN(nn.Module):
             data.batch,
         )
 
-        x = self.atom_embedder(x.squeeze())
-        edge_attr = self.bond_embedder(edge_attr)
-
-        for conv in self.gnn_layers:
-            x = x + F.relu(conv(x, edge_index, edge_attr))
+        x = self._message_passing(x, edge_index, edge_attr)      # FIX #7
 
         molecule_embedding = self.pool(x, batch_idx)
         return molecule_embedding
 
     # ====================================================
-    # Graph-level embedding (GCN/GAT-compatible API) ✅ NEW
+    # Graph-level embedding (unified API across GCN/GIN/GAT)
     # ====================================================
     def get_graph_embedding(self, data):
-        """
-        Alias for get_embedding() to keep a unified interface
-        across GCN / GIN / GAT models.
-        """
         return self.get_embedding(data)

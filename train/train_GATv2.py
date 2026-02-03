@@ -1,5 +1,7 @@
 import os
-
+import config
+print(config.__file__)
+print(dir(config))
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -23,14 +25,14 @@ os.makedirs(model_dir, exist_ok=True)
 if __name__ == "__main__":
     pl.seed_everything(42)
     datamodule = MoleculeDataModule(
-        data_dir=os.path.join(BASE_DATA_DIR, "optimized_graph_dataset"),
+        data_dir="data",
         batch_size=8,
         # batch_size=64,
         # num_workers=os.cpu_count() or 1,
         num_workers=2   ,
     )
     model = GraphMoleculeLightning(
-        hidden_dim=hidden_dim, num_layers=num_layers, num_heads=num_heads
+        hidden_dim=config.HIDDEN_DIM, num_layers=config.NUM_LAYERS, num_heads=config.NUM_HEADS
     )
     checkpoint_callback = ModelCheckpoint(
         dirpath=model_dir,

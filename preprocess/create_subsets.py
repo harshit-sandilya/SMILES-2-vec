@@ -6,7 +6,7 @@ RAW_PATH = "data/raw/chembl.csv"
 OUT_DIR = Path("data/subsets")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-SIZES = [10_000, 30_000, 50_000, 100_000]
+SIZES = [10_000, 30_000, 50_000, 80_000, 100_000]
 SEED = 42
 MAX_ATOMS = 64  # align with your project utils
 

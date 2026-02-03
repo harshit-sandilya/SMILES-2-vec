@@ -1,9 +1,17 @@
-import warnings
-from multiprocessing import Pool, cpu_count
+import sys
 from pathlib import Path
 
+# =====================================================
+# Fix Python path
+# =====================================================
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+import warnings
+from multiprocessing import Pool, cpu_count
+
 import pandas as pd
-from lightning.data import optimize
+from litdata import optimize   # <-- IMPORTANT (not lightning.data)
 
 from preprocess.tokenizer import SMILESTokenizer
 from train.utils import create_masked_graph_from_tensors, has_max_64_atoms
@@ -17,7 +25,6 @@ warnings.filterwarnings(
 # ==============================
 # Resolve project root & data dir
 # ==============================
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 
@@ -65,7 +72,7 @@ def parallel_process_and_create_graphs(input_file: str):
 
 
 if __name__ == "__main__":
-    input_csv_file = DATA_DIR / "canonical_smiles.csv"
+    input_csv_file = DATA_DIR / "canonical_smiles_subset_100k.csv"
     output_dir = DATA_DIR / "optimized_graph_dataset"
 
     print(f"Starting dataset optimization for {input_csv_file}...")

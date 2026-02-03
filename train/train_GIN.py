@@ -1,40 +1,3 @@
-# import sys
-# from pathlib import Path
-
-# PROJECT_ROOT = Path(__file__).resolve().parents[1]
-# sys.path.insert(0, str(PROJECT_ROOT))
-
-# import os
-# import torch
-# import pytorch_lightning as pl
-
-# from config import *
-# from train.lightning_model_GIN import GraphMoleculeLightningGIN
-
-# # =========================
-# # Paths
-# # =========================
-# BASE_RESULTS_DIR = "results"
-# BASE_MODELS_DIR = os.path.join(BASE_RESULTS_DIR, "models")
-# os.makedirs(BASE_MODELS_DIR, exist_ok=True)
-
-# if __name__ == "__main__":
-#     pl.seed_everything(42)
-
-#     print("🧠 Initializing GIN encoder (no training)...")
-
-#     model = GraphMoleculeLightningGIN(
-#         hidden_dim=hidden_dim,
-#         num_layers=num_layers,
-#     )
-
-#     ckpt_path = os.path.join(BASE_MODELS_DIR, "final_model_GIN.ckpt")
-
-#     # ✅ Correct way for inference-only models
-#     torch.save(model.state_dict(), ckpt_path)
-
-#     print(f"✅ Saved GIN encoder weights to {ckpt_path}")
-
 import sys
 from pathlib import Path
 
@@ -48,7 +11,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
 
 from config import *
-from train.data_module import MoleculeDataModule
+from train.data_module_GIN import MoleculeDataModule
 from train.lightning_model_GIN import GraphMoleculeLightningGIN
 
 
@@ -66,16 +29,18 @@ if __name__ == "__main__":
 
     # ---------------- Data ----------------
     datamodule = MoleculeDataModule(
-        data_dir=os.path.join(BASE_DATA_DIR, "optimized_graph_dataset"),
-        batch_size=8,          # safe for RTX 3050
-        num_workers=2,
+        data_dir="data",
+        batch_size=16,
+        num_workers=4,
+        mask_ratio_atoms=0.15,
+        mask_ratio_bonds=0.15,
     )
 
     # ---------------- Model ----------------
     model = GraphMoleculeLightningGIN(
-        hidden_dim=256,
-        num_layers=5,
-        lr=1e-4,
+        hidden_dim=HIDDEN_DIM,       # pulled from config (128)
+        num_layers=NUM_LAYERS,       # FIX #9: pulled from config (5), was hardcoded
+        lr=LEARNING_RATE,
     )
 
     # ---------------- Callbacks ----------------
@@ -101,22 +66,19 @@ if __name__ == "__main__":
 
     # ---------------- Trainer ----------------
     trainer = pl.Trainer(
-        max_epochs=50,
+        max_epochs=30,
         accelerator="gpu",
         devices=1,
+        precision="bf16-mixed",      # FIX #10: was "32" with a comment claiming speed gain; bf16 actually gives that
         callbacks=[checkpoint_callback, early_stopping_callback],
         logger=tensorboard_logger,
-        log_every_n_steps=10,
+        log_every_n_steps=50,
     )
 
-    print("🚀 Starting REAL GIN training on GPU...")
+    print("🚀 Starting GIN training on GPU...")
     trainer.fit(model, datamodule=datamodule)
     print("✅ Training completed.")
 
     trainer.save_checkpoint(
         os.path.join(BASE_MODELS_DIR, "final_model_GIN.ckpt")
     )
-
-
-
-

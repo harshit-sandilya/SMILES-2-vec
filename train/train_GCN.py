@@ -8,8 +8,8 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
 
-from config import *
-from train.data_module import MoleculeDataModule
+from config import *                                      # imports BATCH_SIZE, EPOCHS, HIDDEN_DIM, NUM_LAYERS, LEARNING_RATE
+from train.data_module_GCN import MoleculeDataModuleGCN   # FIX: imports from data_module_GCN
 from train.lightning_model_GCN import GraphMoleculeLightningGCN
 
 BASE_DATA_DIR = "data"
@@ -23,16 +23,16 @@ os.makedirs(BASE_LOGS_DIR, exist_ok=True)
 if __name__ == "__main__":
     pl.seed_everything(42)
 
-    datamodule = MoleculeDataModule(
-        data_dir=os.path.join(BASE_DATA_DIR, "optimized_graph_dataset"),
-        batch_size=8,          # safe for RTX 3050
+    datamodule = MoleculeDataModuleGCN(
+        data_csv=os.path.join(BASE_DATA_DIR, "canonical_smiles_subset_100k.csv"),  # FIX: data_module_GCN expects data_csv, not data_dir
+        batch_size=BATCH_SIZE,        # FIX BUG 6: was hardcoded to 8, now uses config (64)
         num_workers=2,
     )
 
     model = GraphMoleculeLightningGCN(
-        hidden_dim=hidden_dim,
-        num_layers=num_layers,
-        lr=1e-4,
+        hidden_dim=HIDDEN_DIM,
+        num_layers=NUM_LAYERS,
+        lr=LEARNING_RATE,
     )
 
     checkpoint_callback = ModelCheckpoint(
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     )
 
     early_stopping = EarlyStopping(
-        monitor="val_loss",
+        monitor="val_loss",           # Now monitors combined val_loss (recon + distinction)
         patience=5,
         mode="min",
     )
@@ -54,7 +54,7 @@ if __name__ == "__main__":
     )
 
     trainer = pl.Trainer(
-        max_epochs=30,
+        max_epochs=EPOCHS,            # FIX BUG 6: was hardcoded to 20, now uses config (30)
         accelerator="gpu",
         devices=1,
         callbacks=[checkpoint_callback, early_stopping],
@@ -64,5 +64,3 @@ if __name__ == "__main__":
 
     trainer.fit(model, datamodule=datamodule)
     trainer.save_checkpoint(os.path.join(BASE_MODELS_DIR, "final_model_GCN.ckpt"))
-
-

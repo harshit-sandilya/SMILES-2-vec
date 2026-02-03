@@ -34,7 +34,7 @@ def main():
     print("Loaded model:", MODEL_PATH)
 
     # -------- Load data --------
-    df = pd.read_csv(DATA_DIR / "canonical_smiles_subset_10k.csv")
+    df = pd.read_csv(DATA_DIR / "canonical_smiles_subset_100k.csv")
     df["valid"] = df["smiles"].apply(has_max_64_atoms)
     df = df[df["valid"]].reset_index(drop=True)
 
