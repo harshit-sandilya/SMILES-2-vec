@@ -29,7 +29,7 @@ if __name__ == "__main__":
 
     # ---------------- Data ----------------
     datamodule = MoleculeDataModule(
-        data_dir="data",
+        data_dir="BASE_DATA_DIR",
         batch_size=16,
         num_workers=4,
         mask_ratio_atoms=0.15,
