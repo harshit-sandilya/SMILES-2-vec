@@ -1,221 +1,117 @@
-import argparse
-import csv
-import os
-import requests
-from mpi4py import MPI
-from tqdm import tqdm
+import sys
+from pathlib import Path
+import warnings
+import pandas as pd
+import torch
+from litdata import optimize
 
-BASE_DATA_DIR = "data"
+from preprocess.tokenize import SMILESTokenizer
+from train.utils import create_masked_graph_from_tensors
 
-# ── ZINC ──────────────────────────────────────────────────────────────────────
+warnings.filterwarnings(
+    "ignore",
+    message="An item was larger than the target chunk size",
+    category=UserWarning,
+)
 
-def get_zinc_tranche_urls():
-    """
-    Returns the list of all ZINC tranche .smi URLs.
-    Adjust the URL pattern to match the ZINC version you are using.
-    """
-    base_url = "https://files.docking.org/2D/"
-    tranches = []
-
-    # ZINC organises files by two-letter codes (AA, AB, ... PZ)
-    for c1 in "ABCDEFGHIJKLMNOP":
-        for c2 in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-            url = f"{base_url}{c1}{c2}/{c1}{c2}.smi"
-            tranches.append(url)
-
-    return tranches
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
 
 
-def download_zinc_file(url, dest_folder):
-    """Download a single ZINC .smi file; skip if already present."""
-    filename = url.split("/")[-1]
-    dest_path = os.path.join(dest_folder, filename)
+def process_single_smiles(smiles: str, tokenizer):
+    """Process one SMILES string into a masked graph (safe version)."""
+    try:
+        tokenized_smiles = tokenizer.tokenize(smiles)
 
-    if os.path.exists(dest_path):
-        return dest_path
+        atomic_numbers = torch.tensor(
+            tokenized_smiles["atomic_numbers"], dtype=torch.long
+        )
+        bond_matrix = torch.tensor(
+            tokenized_smiles["bond_matrix"], dtype=torch.float
+        )
 
-    response = requests.get(url, timeout=60)
-    if response.status_code == 200:
-        with open(dest_path, "w") as f:
-            f.write(response.text)
-        return dest_path
-    else:
+        data = create_masked_graph_from_tensors(
+            atomic_numbers=atomic_numbers,
+            bond_matrix=bond_matrix,
+            mask_ratio_atoms=0.15,
+            mask_ratio_bonds=0.15,
+        )
+
+        return {
+            "x": data.x,
+            "edge_index": data.edge_index,
+            "edge_attr": data.edge_attr,
+            "y_atoms": data.y_atoms,
+            "y_bonds": data.y_bonds,
+        }
+
+    except Exception as e:
         return None
 
 
-def process_zinc_smi(file_path):
-    """Parse a .smi file and return list of (zinc_id, smiles) tuples."""
-    rows = []
-    if file_path is None or not os.path.exists(file_path):
-        return rows
-    with open(file_path, "r") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                smiles, zinc_id = line.split()
-                if zinc_id == "zinc_id":
-                    continue
-                rows.append((zinc_id, smiles))
-            except ValueError:
-                pass
-    return rows
-
-
-# ── ChEMBL ────────────────────────────────────────────────────────────────────
-
-def get_chembl_chunk_ranges(total, chunk_size=10000):
-    """Return (offset, limit) pairs that cover all ChEMBL molecules."""
-    return [(offset, chunk_size) for offset in range(0, total, chunk_size)]
-
-
-def fetch_chembl_total():
-    """Query ChEMBL REST API for the total molecule count."""
-    url = "https://www.ebi.ac.uk/chembl/api/data/molecule?format=json&limit=1"
-    response = requests.get(url, timeout=60)
-    response.raise_for_status()
-    return response.json()["page_meta"]["total_count"]
-
-
-def fetch_chembl_chunk(offset, limit):
-    """Fetch one page of ChEMBL molecules; return list of (chembl_id, smiles)."""
-    url = (
-        f"https://www.ebi.ac.uk/chembl/api/data/molecule"
-        f"?format=json&limit={limit}&offset={offset}"
-    )
-    response = requests.get(url, timeout=120)
-    response.raise_for_status()
-    rows = []
-    for mol in response.json().get("molecules", []):
-        cid = mol.get("molecule_chembl_id", "")
-        struct = mol.get("molecule_structures") or {}
-        smiles = struct.get("canonical_smiles", "")
-        if cid and smiles:
-            rows.append((cid, smiles))
-    return rows
-
-
-# ── MPI helpers ───────────────────────────────────────────────────────────────
-
-def scatter_chunks(comm, all_chunks):
+def parallel_process_and_create_graphs(input_file: str):
     """
-    Rank 0 scatters chunks across all ranks.
-    Returns the sub-list assigned to the calling rank.
+    Generator function called by litdata workers.
+    Handles both ZINC and ChEMBL CSV formats:
+      - ZINC:   columns [zinc_id,   smiles]
+      - ChEMBL: columns [chembl_id, smiles]
+    Both share the 'smiles' column name so no special branching needed.
     """
-    rank = comm.Get_rank()
-    size = comm.Get_size()
+    tokenizer = SMILESTokenizer()
+    csv_chunk_size = 10_000
 
-    if rank == 0:
-        # Round-robin split
-        split = [all_chunks[i::size] for i in range(size)]
-    else:
-        split = None
+    source_name = Path(input_file).stem  # e.g. "zinc_smiles" or "chembl_smiles"
+    print(f"[Worker] Processing source: {source_name}")
 
-    my_chunks = comm.scatter(split, root=0)
-    return my_chunks
+    for chunk_df in pd.read_csv(input_file, chunksize=csv_chunk_size):
+        if "smiles" not in chunk_df.columns:
+            raise ValueError(
+                f"No 'smiles' column found in {input_file}. "
+                f"Available columns: {chunk_df.columns.tolist()}"
+            )
 
-
-def gather_and_write(comm, my_rows, output_csv, header):
-    """Gather all rows to rank 0 and write the final CSV."""
-    all_rows = comm.gather(my_rows, root=0)
-
-    if comm.Get_rank() == 0:
-        output_dir = os.path.dirname(output_csv)
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-
-        with open(output_csv, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(header)
-            for rank_rows in all_rows:
-                writer.writerows(rank_rows)
-
-        print(f"\nWrote {sum(len(r) for r in all_rows)} rows to {output_csv}")
-
-
-# ── ZINC main ─────────────────────────────────────────────────────────────────
-
-def run_zinc(args, comm):
-    rank = comm.Get_rank()
-
-    # Build full URL list on rank 0, then broadcast
-    if rank == 0:
-        all_urls = get_zinc_tranche_urls()
-        print(f"[ZINC] Total tranches: {len(all_urls)}")
-        zinc_folder = os.path.join(BASE_DATA_DIR, "zinc_smi")
-        os.makedirs(zinc_folder, exist_ok=True)
-    else:
-        all_urls = None
-        zinc_folder = None
-
-    all_urls   = comm.bcast(all_urls,   root=0)
-    zinc_folder = comm.bcast(zinc_folder, root=0)
-
-    my_urls = scatter_chunks(comm, all_urls)
-
-    my_rows = []
-    for url in tqdm(my_urls, desc=f"[Rank {rank}] ZINC", unit="file"):
-        path = download_zinc_file(url, zinc_folder)
-        my_rows.extend(process_zinc_smi(path))
-
-    output_csv = os.path.join(BASE_DATA_DIR, args.zinc_output)
-    gather_and_write(comm, my_rows, output_csv, ["zinc_id", "smiles"])
-
-
-# ── ChEMBL main ───────────────────────────────────────────────────────────────
-
-def run_chembl(args, comm):
-    rank = comm.Get_rank()
-
-    # Fetch total count on rank 0 only, then broadcast chunk list
-    if rank == 0:
-        total = fetch_chembl_total()
-        print(f"[ChEMBL] Total molecules: {total}")
-        all_chunks = get_chembl_chunk_ranges(total, chunk_size=args.chembl_chunk_size)
-        print(f"[ChEMBL] Total chunks: {len(all_chunks)}")
-    else:
-        all_chunks = None
-
-    all_chunks = comm.bcast(all_chunks, root=0)
-    my_chunks  = scatter_chunks(comm, all_chunks)
-
-    my_rows = []
-    for offset, limit in tqdm(my_chunks, desc=f"[Rank {rank}] ChEMBL", unit="chunk"):
-        try:
-            my_rows.extend(fetch_chembl_chunk(offset, limit))
-        except Exception as e:
-            print(f"[Rank {rank}] Error at offset {offset}: {e}")
-
-    output_csv = os.path.join(BASE_DATA_DIR, args.chembl_output)
-    gather_and_write(comm, my_rows, output_csv, ["chembl_id", "smiles"])
-
-
-# ── Entry point ───────────────────────────────────────────────────────────────
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Parallel ZINC + ChEMBL downloader using MPI"
-    )
-    parser.add_argument("--zinc",   action="store_true", help="Download ZINC")
-    parser.add_argument("--chembl", action="store_true", help="Download ChEMBL")
-    parser.add_argument("--zinc-output",   default="zinc_smiles.csv")
-    parser.add_argument("--chembl-output", default="chembl_smiles.csv")
-    parser.add_argument("--chembl-chunk-size", type=int, default=10000)
-    args = parser.parse_args()
-
-    comm = MPI.COMM_WORLD
-
-    if args.zinc:
-        run_zinc(args, comm)
-
-    if args.chembl:
-        run_chembl(args, comm)
-
-    if not args.zinc and not args.chembl:
-        if comm.Get_rank() == 0:
-            print("Specify --zinc and/or --chembl")
+        smiles_list = chunk_df["smiles"].dropna().tolist()
+        for smiles in smiles_list:
+            data = process_single_smiles(smiles, tokenizer)
+            if data is not None:
+                yield data
 
 
 if __name__ == "__main__":
-    main()
+    # ── Input files ───────────────────────────────────────────────────────────
+    zinc_csv    = DATA_DIR / "zinc_smiles.csv"
+    chembl_csv  = DATA_DIR / "chembl_smiles.csv"
+    output_dir  = DATA_DIR / "optimized_graph_dataset"
+
+    # Validate inputs exist
+    input_files = []
+    for path in [zinc_csv, chembl_csv]:
+        if path.exists():
+            input_files.append(str(path))
+            print(f"✔ Found: {path}")
+        else:
+            print(f"✘ Missing (skipping): {path}")
+
+    if not input_files:
+        raise FileNotFoundError(
+            "No input CSV files found. "
+            "Run the downloader script first to generate zinc_smiles.csv and chembl_smiles.csv."
+        )
+
+    print(f"\nStarting dataset optimization with {len(input_files)} source(s)...")
+    print(f"Output directory: {output_dir}\n")
+
+    # ── litdata optimize ──────────────────────────────────────────────────────
+    # litdata will call parallel_process_and_create_graphs once per input file,
+    # distributing files across workers automatically.
+    optimize(
+        fn=parallel_process_and_create_graphs,
+        inputs=input_files,          # [zinc_smiles.csv, chembl_smiles.csv]
+        output_dir=str(output_dir),
+        num_workers=4,
+        chunk_bytes="64MB",
+        mode="overwrite",
+    )
+
+    print("\n✔ Dataset optimization complete!")
+    print(f"Streamable dataset saved at: {output_dir}")
