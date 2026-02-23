@@ -12,15 +12,11 @@ BASE_DATA_DIR = "data"
 
 # ── ZINC ──────────────────────────────────────────────────────────────────────
 
-def get_zinc_tranche_urls():
-    """Returns the list of all ZINC tranche .smi URLs."""
-    base_url = "https://files.docking.org/2D/"
-    tranches = []
-    for c1 in "ABCDEFGHIJKLMNOP":
-        for c2 in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-            url = f"{base_url}{c1}{c2}/{c1}{c2}.smi"
-            tranches.append(url)
-    return tranches
+def get_zinc_tranche_urls(urls_file="download/zinc_urls.txt"):
+    """Read ZINC tranche URLs from file."""
+    with open(urls_file, "r") as f:
+        urls = [line.strip() for line in f if line.strip()]
+    return urls
 
 
 def download_zinc_file(url, dest_folder):
@@ -34,10 +30,11 @@ def download_zinc_file(url, dest_folder):
     session = requests.Session()
     retry = Retry(
         total=5,
-        backoff_factor=2,       # waits 2, 4, 8, 16, 32 seconds between retries
+        backoff_factor=2,
         status_forcelist=[429, 500, 502, 503, 504],
     )
     adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
     session.mount("https://", adapter)
 
     try:
@@ -51,9 +48,9 @@ def download_zinc_file(url, dest_folder):
             return None
     except Exception as e:
         print(f"[Warning] Failed to download {url}: {e}")
-        return None  # Skip instead of crashing
+        return None
     finally:
-        time.sleep(1)  # Delay between requests to avoid rate limiting
+        time.sleep(0.5)
 
 
 def process_zinc_smi(file_path):
@@ -157,8 +154,8 @@ def run_zinc(args, comm):
     rank = comm.Get_rank()
 
     if rank == 0:
-        all_urls = get_zinc_tranche_urls()
-        print(f"[ZINC] Total tranches: {len(all_urls)}")
+        all_urls = get_zinc_tranche_urls(args.zinc_urls_file)
+        print(f"[ZINC] Total URLs loaded: {len(all_urls)}")
         zinc_folder = os.path.join(BASE_DATA_DIR, "zinc_smi")
         os.makedirs(zinc_folder, exist_ok=True)
     else:
@@ -169,6 +166,7 @@ def run_zinc(args, comm):
     zinc_folder = comm.bcast(zinc_folder, root=0)
 
     my_urls = scatter_chunks(comm, all_urls)
+    print(f"[Rank {rank}] Assigned {len(my_urls)} URLs")
 
     my_rows = []
     for url in tqdm(my_urls, desc=f"[Rank {rank}] ZINC", unit="file"):
@@ -214,6 +212,8 @@ def main():
     )
     parser.add_argument("--zinc",              action="store_true", help="Download ZINC")
     parser.add_argument("--chembl",            action="store_true", help="Download ChEMBL")
+    parser.add_argument("--zinc-urls-file",    default="download/zinc_urls.txt",
+                                               help="Path to file containing ZINC URLs")
     parser.add_argument("--zinc-output",       default="zinc_smiles.parquet")
     parser.add_argument("--chembl-output",     default="chembl_smiles.parquet")
     parser.add_argument("--chembl-chunk-size", type=int, default=10000)
