@@ -20,56 +20,38 @@ def get_zinc_tranche_urls(urls_file="download/zinc_urls.txt"):
 
 
 def download_zinc_file(url, dest_folder):
-    """Download a single ZINC .smi file with retry logic, headers, and throttling."""
-
+    """Download a single ZINC .smi file with retry logic; skip if already present."""
     filename = url.split("/")[-1]
     dest_path = os.path.join(dest_folder, filename)
 
     if os.path.exists(dest_path):
         return dest_path
 
-    # Force HTTPS (ZINC blocks many HTTP requests)
-    url = url.replace("http://", "https://")
-
     session = requests.Session()
-
     retry = Retry(
-        total=8,
-        backoff_factor=3,
-        status_forcelist=[403, 429, 500, 502, 503, 504],
-        allowed_methods=["GET"]
+        total=5,
+        backoff_factor=2,
+        status_forcelist=[429, 500, 502, 503, 504],
     )
-
     adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
     session.mount("https://", adapter)
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
-        "Accept": "text/plain, */*",
-        "Connection": "keep-alive"
-    }
-
     try:
-        response = session.get(url, headers=headers, timeout=120)
-
+        response = session.get(url, timeout=60)
         if response.status_code == 200:
             with open(dest_path, "w") as f:
                 f.write(response.text)
-
-            # Light throttling to avoid cluster burst behavior
-            time.sleep(0.8)
             return dest_path
-
         else:
-            print(f"[Rank {MPI.COMM_WORLD.Get_rank()}] Status {response.status_code} for {url}")
+            print(f"[Warning] Status {response.status_code} for {url}")
             return None
-
     except Exception as e:
-        print(f"[Rank {MPI.COMM_WORLD.Get_rank()}] Failed {url}: {e}")
+        print(f"[Warning] Failed to download {url}: {e}")
         return None
-
     finally:
-        time.sleep(1.0)  # extra cooling delay per request
+        time.sleep(0.5)
+
 
 def process_zinc_smi(file_path):
     """Parse a .smi file and return list of (zinc_id, smiles) tuples."""
@@ -208,10 +190,7 @@ def run_chembl(args, comm):
     else:
         all_chunks = None
 
-    rank = comm.Get_rank()
-    
     all_chunks = comm.bcast(all_chunks, root=0)
-    print(f"[Rank {rank}] Starting with throttle mode enabled")
     my_chunks  = scatter_chunks(comm, all_chunks)
 
     my_rows = []
