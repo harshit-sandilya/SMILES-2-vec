@@ -48,7 +48,30 @@ def process_single_smiles(smiles: str, tokenizer):
     except Exception as e:
         return None
 
+from torch.utils.data import Dataset
 
+class MaskedMoleculeDataset(Dataset):
+    def __init__(self, tokenized_smiles_list, mask_ratio_atoms=0.0, mask_ratio_bonds=0.0):
+        self.data = tokenized_smiles_list
+        self.mask_ratio_atoms = mask_ratio_atoms
+        self.mask_ratio_bonds = mask_ratio_bonds
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        tokenized = self.data[idx]
+
+        atomic_numbers = torch.tensor(tokenized["atomic_numbers"], dtype=torch.long)
+        bond_matrix = torch.tensor(tokenized["bond_matrix"], dtype=torch.float)
+
+        return create_masked_graph_from_tensors(
+            atomic_numbers,
+            bond_matrix,
+            self.mask_ratio_atoms,
+            self.mask_ratio_bonds,
+        )
+        
 def parallel_process_and_create_graphs(input_file: str):
     """
     Generator function called by litdata workers.

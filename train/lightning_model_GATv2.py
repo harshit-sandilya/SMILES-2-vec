@@ -1,10 +1,16 @@
 import torch
+import math
 import pytorch_lightning as pl
 import torch.nn.functional as F
 from torch.optim import AdamW
 
 from train.models.model_GATv2 import GraphMoleculeModelGATv2
-from config_GATv2 import ATOM_VOCAB_SIZE, BOND_VOCAB_SIZE
+from config_GATv2 import (
+    ATOM_VOCAB_SIZE,
+    BOND_VOCAB_SIZE,
+    EMBEDDING_DIM,
+    PROPERTY_LOSS_WEIGHT,
+)
 
 
 class GraphMoleculeLightningGATv2(pl.LightningModule):
@@ -15,9 +21,8 @@ class GraphMoleculeLightningGATv2(pl.LightningModule):
         num_heads=8,
         lr=2e-4,
         weight_decay=1e-5,
-        use_contrastive=False,
-        contrastive_weight=0.1,
-        contrastive_temperature=0.07,
+        warmup_steps=2000,
+        property_loss_weight=PROPERTY_LOSS_WEIGHT,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -28,13 +33,14 @@ class GraphMoleculeLightningGATv2(pl.LightningModule):
             num_heads=num_heads,
             ATOM_VOCAB_SIZE=ATOM_VOCAB_SIZE,
             BOND_VOCAB_SIZE=BOND_VOCAB_SIZE,
+            embedding_dim=EMBEDDING_DIM,
+            num_mol_props=4,
         )
 
         self.lr = lr
         self.weight_decay = weight_decay
-        self.use_contrastive = use_contrastive
-        self.contrastive_weight = contrastive_weight
-        self.contrastive_temperature = contrastive_temperature
+        self.warmup_steps = warmup_steps
+        self.property_loss_weight = property_loss_weight
 
     # --------------------------------------------------
     # Forward
@@ -43,112 +49,83 @@ class GraphMoleculeLightningGATv2(pl.LightningModule):
         return self.model(batch)
 
     # --------------------------------------------------
-    # Contrastive Loss (Optional) - Encourages diversity
-    # --------------------------------------------------
-    def _contrastive_loss(self, batch):
-        """
-        Intra-batch contrastive loss to encourage diverse embeddings.
-        Molecules in the same batch are treated as negatives.
-        This prevents all embeddings from collapsing to similar values.
-        """
-        # Get graph embeddings
-        embeddings = self.model.get_graph_embedding(batch)  # [batch_size, hidden_dim]
-        
-        # Embeddings are already L2-normalized in the model
-        # Compute similarity matrix
-        sim_matrix = torch.mm(embeddings, embeddings.t()) / self.contrastive_temperature
-        
-        # Mask out diagonal (self-similarity)
-        mask = torch.eye(sim_matrix.size(0), device=self.device).bool()
-        sim_matrix = sim_matrix.masked_fill(mask, float('-inf'))
-        
-        # Contrastive loss: minimize average pairwise similarity
-        # (encourage embeddings to spread out)
-        loss = -torch.logsumexp(sim_matrix, dim=1).mean()
-        
-        return loss
-
-    # --------------------------------------------------
-    # Compute Loss
+    # Compute loss
     # --------------------------------------------------
     def _compute_loss(self, batch):
-        atom_logits, bond_logits = self(batch)
+        atom_logits, bond_logits, graph_emb, predicted_props = self(batch)
 
-        # --- Reconstruction losses ---
-        atom_loss = F.cross_entropy(
-            atom_logits,
-            batch.y_atoms,
-            ignore_index=-1,
-        )
+        # ── Reconstruction losses ──
+        atom_targets = batch.y_atoms.long()
+        bond_targets = batch.y_bonds.long()
 
-        bond_loss = F.cross_entropy(
-            bond_logits,
-            batch.y_bonds,
-            ignore_index=-1,
-        )
+        atom_loss = F.cross_entropy(atom_logits, atom_targets, ignore_index=-1)
+        bond_loss = F.cross_entropy(bond_logits, bond_targets, ignore_index=-1)
+        recon_loss = atom_loss + bond_loss
 
-        reconstruction_loss = atom_loss + bond_loss
-        
-        # --- Optional contrastive loss ---
-        if self.use_contrastive:
-            contrastive_loss = self._contrastive_loss(batch)
-            total_loss = reconstruction_loss + self.contrastive_weight * contrastive_loss
-        else:
-            contrastive_loss = torch.tensor(0.0, device=self.device)
-            total_loss = reconstruction_loss
+        # ── Property prediction loss ──
+        # Batch.from_data_list() concatenates each graph's mol_props [4] into
+        # a flat [B*4] tensor. Reshape to [B, 4] before MSE so shapes match
+        # predicted_props which is [B, 4] from the property head.
+        mol_props = batch.mol_props.float().view(-1, 4)  # [B*4] → [B, 4]
+        prop_loss = F.mse_loss(predicted_props, mol_props)
 
-        return total_loss, reconstruction_loss, atom_loss, bond_loss, contrastive_loss
+        total_loss = recon_loss + self.property_loss_weight * prop_loss
+
+        return total_loss, recon_loss, atom_loss, bond_loss, prop_loss
 
     # --------------------------------------------------
     # Training step
     # --------------------------------------------------
     def training_step(self, batch, batch_idx):
-        total_loss, recon_loss, atom_loss, bond_loss, contrast_loss = self._compute_loss(batch)
-        
-        self.log("train_loss",            total_loss,  prog_bar=True,  batch_size=batch.num_graphs)
-        self.log("train_recon_loss",      recon_loss,  prog_bar=False, batch_size=batch.num_graphs)
-        self.log("train_atom_loss",       atom_loss,   prog_bar=False, batch_size=batch.num_graphs)
-        self.log("train_bond_loss",       bond_loss,   prog_bar=False, batch_size=batch.num_graphs)
-        
-        if self.use_contrastive:
-            self.log("train_contrast_loss", contrast_loss, prog_bar=True, batch_size=batch.num_graphs)
-        
+        total_loss, recon_loss, atom_loss, bond_loss, prop_loss = self._compute_loss(
+            batch
+        )
+
+        bs = batch.num_graphs
+        self.log("train_loss", total_loss, prog_bar=True, batch_size=bs)
+        self.log("train_recon_loss", recon_loss, prog_bar=False, batch_size=bs)
+        self.log("train_atom_loss", atom_loss, prog_bar=False, batch_size=bs)
+        self.log("train_bond_loss", bond_loss, prog_bar=False, batch_size=bs)
+        self.log("train_prop_loss", prop_loss, prog_bar=True, batch_size=bs)
+
         return total_loss
 
     # --------------------------------------------------
-    # Validation
+    # Validation step
     # --------------------------------------------------
     def validation_step(self, batch, batch_idx):
-        total_loss, recon_loss, atom_loss, bond_loss, contrast_loss = self._compute_loss(batch)
-        
-        self.log("val_loss",            total_loss,  prog_bar=True,  batch_size=batch.num_graphs)
-        self.log("val_recon_loss",      recon_loss,  prog_bar=False, batch_size=batch.num_graphs)
-        self.log("val_atom_loss",       atom_loss,   prog_bar=False, batch_size=batch.num_graphs)
-        self.log("val_bond_loss",       bond_loss,   prog_bar=False, batch_size=batch.num_graphs)
-        
-        if self.use_contrastive:
-            self.log("val_contrast_loss", contrast_loss, prog_bar=False, batch_size=batch.num_graphs)
-        
+        total_loss, recon_loss, atom_loss, bond_loss, prop_loss = self._compute_loss(
+            batch
+        )
+
+        bs = batch.num_graphs
+        self.log("val_loss", total_loss, prog_bar=True, batch_size=bs)
+        self.log("val_recon_loss", recon_loss, prog_bar=False, batch_size=bs)
+        self.log("val_atom_loss", atom_loss, prog_bar=False, batch_size=bs)
+        self.log("val_bond_loss", bond_loss, prog_bar=False, batch_size=bs)
+        self.log("val_prop_loss", prop_loss, prog_bar=False, batch_size=bs)
+
         return total_loss
 
     # --------------------------------------------------
-    # Test
+    # Test step
     # --------------------------------------------------
     def test_step(self, batch, batch_idx):
-        total_loss, recon_loss, atom_loss, bond_loss, contrast_loss = self._compute_loss(batch)
-        
-        self.log("test_loss",            total_loss,  prog_bar=True,  batch_size=batch.num_graphs)
-        self.log("test_recon_loss",      recon_loss,  prog_bar=False, batch_size=batch.num_graphs)
-        self.log("test_atom_loss",       atom_loss,   prog_bar=False, batch_size=batch.num_graphs)
-        self.log("test_bond_loss",       bond_loss,   prog_bar=False, batch_size=batch.num_graphs)
-        
-        if self.use_contrastive:
-            self.log("test_contrast_loss", contrast_loss, prog_bar=False, batch_size=batch.num_graphs)
-        
+        total_loss, recon_loss, atom_loss, bond_loss, prop_loss = self._compute_loss(
+            batch
+        )
+
+        bs = batch.num_graphs
+        self.log("test_loss", total_loss, prog_bar=True, batch_size=bs)
+        self.log("test_recon_loss", recon_loss, prog_bar=False, batch_size=bs)
+        self.log("test_atom_loss", atom_loss, prog_bar=False, batch_size=bs)
+        self.log("test_bond_loss", bond_loss, prog_bar=False, batch_size=bs)
+        self.log("test_prop_loss", prop_loss, prog_bar=False, batch_size=bs)
+
         return total_loss
 
     # --------------------------------------------------
-    # Optimizer with warmup
+    # Optimizer with linear warmup + cosine decay
     # --------------------------------------------------
     def configure_optimizers(self):
         optimizer = AdamW(
@@ -156,26 +133,31 @@ class GraphMoleculeLightningGATv2(pl.LightningModule):
             lr=self.lr,
             weight_decay=self.weight_decay,
         )
-        
-        # Cosine annealing with warmup for better convergence
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer,
-            T_0=10,  # Restart every 10 epochs
-            T_mult=2,
-            eta_min=self.lr * 0.01,
-        )
-        
+
+        total_steps = self.trainer.estimated_stepping_batches
+
+        def lr_lambda(current_step: int) -> float:
+            if current_step < self.warmup_steps:
+                return float(current_step) / float(max(1, self.warmup_steps))
+            progress = float(current_step - self.warmup_steps) / float(
+                max(1, total_steps - self.warmup_steps)
+            )
+            return max(0.01, 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
-                "interval": "epoch",
+                "interval": "step",
+                "frequency": 1,
             },
         }
 
-    # ==================================================
+    # --------------------------------------------------
     # Embedding API
-    # ==================================================
+    # --------------------------------------------------
     def get_embedding(self, batch):
         return self.model.get_embedding(batch)
 

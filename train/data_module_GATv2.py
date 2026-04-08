@@ -1,106 +1,126 @@
-import pandas as pd
-import torch
 from pathlib import Path
 import pytorch_lightning as pl
-from torch.utils.data import random_split
-from torch_geometric.data import Data
-from torch_geometric.loader import DataLoader
-from rdkit import Chem
-from tqdm import tqdm
+from litdata import StreamingDataset, StreamingDataLoader
+from torch_geometric.data import Batch
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+from train.utils import create_masked_graph_from_tensors
 
 
 class MoleculeDataModule(pl.LightningDataModule):
+
     def __init__(
         self,
-        data_dir: str,
-        batch_size: int = 64,
-        train_subset_size: int = None,
-        num_workers: int = 0,
-        mask_ratio_atoms: float = 0.15,  # Add this
-        mask_ratio_bonds: float = 0.15,  # Add this
+        data_dir: str = "data/optimized",
+        batch_size: int = 256,
+        num_workers: int = 32,
     ):
         super().__init__()
-        self.data_file = PROJECT_ROOT / data_dir / "canonical_smiles.csv"
+
+        self.data_path = Path(data_dir)
         self.batch_size = batch_size
-        self.train_subset_size = train_subset_size
         self.num_workers = num_workers
-        self.mask_ratio_atoms = mask_ratio_atoms  # Store it
-        self.mask_ratio_bonds = mask_ratio_bonds  # Store it
-        self.generator = torch.Generator().manual_seed(42)
-
-    def smiles_to_graph(self, smiles):
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
-            return None
-
-        # Node features: atomic numbers
-        x = torch.tensor(
-            [[atom.GetAtomicNum()] for atom in mol.GetAtoms()],
-            dtype=torch.float
-        )
-
-        # Edges
-        edge_index = []
-        for bond in mol.GetBonds():
-            i = bond.GetBeginAtomIdx()
-            j = bond.GetEndAtomIdx()
-            edge_index.append([i, j])
-            edge_index.append([j, i])  # undirected
-
-        if len(edge_index) == 0:
-            return None
-
-        edge_index = torch.tensor(edge_index, dtype=torch.long).t()
-
-        return Data(x=x, edge_index=edge_index)
 
     def setup(self, stage=None):
-        if not self.data_file.exists():
-            raise FileNotFoundError(f"Could not find {self.data_file}")
+        pass
 
-        df = pd.read_csv(self.data_file)
-        smiles_list = df["smiles"].tolist()
+    # ---------------- Graph builder ----------------
+    def collate_graphs(self, batch):
 
-        if self.train_subset_size:
-            smiles_list = smiles_list[:self.train_subset_size]
+        graphs = []
 
-        dataset = []
-        fail = 0
+        for item in batch:
 
-        print(f"📦 Building GATv2 graphs from {len(smiles_list)} molecules")
+            graph = create_masked_graph_from_tensors(
+                atomic_numbers=item["atomic_numbers"],
+                bond_matrix=item["bond_matrix"],
+                mask_ratio_atoms=0.25,
+                mask_ratio_bonds=0.25,
+                smiles=item["smiles"],
+                apply_masking=True,
+            )
+            # unsqueeze(0) stores mol_props as [1, 4] per graph so that
+            # Batch.from_data_list() concatenates them to [B, 4] instead
+            # of flattening [4] × B into [B*4].
+            graph.mol_props = item["mol_props"].unsqueeze(0)  # [1, 4]
 
-        for smi in tqdm(smiles_list):
-            data = self.smiles_to_graph(smi)
-            if data is None:
-                fail += 1
-                continue
-            dataset.append(data)
+            graphs.append(graph)
 
-        print(f"✅ Success: {len(dataset)} | ❌ Failed: {fail}")
+        return Batch.from_data_list(graphs)
 
-        num_total = len(dataset)
-        num_train = int(0.9 * num_total)
-        num_val = num_total - num_train
+    def collate_graphs_eval(self, batch):
+        """
+        Separate collator for val/test — masks applied but with
+        a fixed lower ratio so evaluation loss is more stable and comparable
+        across checkpoints. Using apply_masking=True (not False) ensures the
+        val loss is still meaningful as a masked-reconstruction metric.
+        """
+        graphs = []
+        for item in batch:
+            graph = create_masked_graph_from_tensors(
+                atomic_numbers=item["atomic_numbers"],
+                bond_matrix=item["bond_matrix"],
+                mask_ratio_atoms=0.15,
+                mask_ratio_bonds=0.15,
+                apply_masking=True,
+                smiles=item["smiles"],
+            )
+            # unsqueeze(0) stores mol_props as [1, 4] per graph so that
+            # Batch.from_data_list() concatenates them to [B, 4] instead
+            # of flattening [4] × B into [B*4].
+            graph.mol_props = item["mol_props"].unsqueeze(0)  # [1, 4]
+            graphs.append(graph)
+        return Batch.from_data_list(graphs)
 
-        self.train_dataset, self.val_dataset = random_split(
-            dataset, [num_train, num_val], generator=self.generator
-        )
-
-        print(f"Train: {len(self.train_dataset)} | Val: {len(self.val_dataset)}")
-
+    # ---------------- Train loader ----------------
     def train_dataloader(self):
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
+
+        dataset = StreamingDataset(
+            input_dir=str(self.data_path / "train"),
             shuffle=True,
-            num_workers=self.num_workers,
+            drop_last=False,
         )
 
-    def val_dataloader(self):
-        return DataLoader(
-            self.val_dataset,
+        return StreamingDataLoader(
+            dataset,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
+            pin_memory=True,
+            persistent_workers=True,
+            collate_fn=self.collate_graphs,
+        )
+
+    # ---------------- Validation loader ----------------
+    def val_dataloader(self):
+
+        dataset = StreamingDataset(
+            input_dir=str(self.data_path / "val"),
+            shuffle=False,
+            drop_last=False,
+        )
+
+        return StreamingDataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            persistent_workers=True,
+            collate_fn=self.collate_graphs_eval,
+        )
+
+    # ---------------- Test loader ----------------
+    def test_dataloader(self):
+
+        dataset = StreamingDataset(
+            input_dir=str(self.data_path / "test"),
+            shuffle=False,
+            drop_last=False,
+        )
+
+        return StreamingDataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            pin_memory=True,
+            persistent_workers=True,
+            collate_fn=self.collate_graphs_eval,
         )

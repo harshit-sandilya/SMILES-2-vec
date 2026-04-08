@@ -1,9 +1,6 @@
 import sys
 from pathlib import Path
 
-# =====================================================
-# Fix Python path (IMPORTANT)
-# =====================================================
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -17,312 +14,331 @@ import numpy as np
 import pandas as pd
 import torch
 from rdkit import Chem, RDLogger
-from rdkit.Chem import AllChem, Descriptors, MACCSkeys, rdMolDescriptors
+from rdkit.Chem import AllChem, MACCSkeys
 from rdkit.DataStructs import cDataStructs
 
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
     mean_squared_error,
-    precision_score,
     r2_score,
-    recall_score,
     roc_auc_score,
 )
 from torch_geometric.loader import DataLoader
 from xgboost import XGBClassifier, XGBRegressor
 
-from config import *
-from preprocess.dataset import MaskedMoleculeDataset
-from train.lightning_model import GraphMoleculeLightning
-from preprocess.tokenizer import SMILESTokenizer
-BASE_DATA_DIR = "data"
+from preprocess.tokenize import SMILESTokenizer
+from train.lightning_model_GATv2 import GraphMoleculeLightningGATv2
+from train.utils import create_masked_graph_from_tensors
+
 BASE_RESULTS_DIR = "results"
+os.makedirs(BASE_RESULTS_DIR, exist_ok=True)
 
 RDLogger.DisableLog("rdApp.WARNING")
 warnings.filterwarnings("ignore", category=UserWarning)
 
-os.makedirs(BASE_RESULTS_DIR, exist_ok=True)
-
+# =====================================================
+# Args
+# =====================================================
 parser = ArgumentParser()
-parser.add_argument(
-    "--model-file",
-    type=str,
-    default="final_model.ckpt",
-    help="Model checkpoint filename (loaded from data/ by default)",
-)
-
+parser.add_argument("--model-file", type=str, default="gatv2_zinc.ckpt")
 args = parser.parse_args()
 
-# model_file = args.model_file
 model_file = (
     args.model_file
     if os.path.isabs(args.model_file)
     else os.path.join("results", "models", args.model_file)
 )
 
+print(f"Loading checkpoint: {model_file}")
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-lightning_model = GraphMoleculeLightning.load_from_checkpoint(
-    model_file,
-    strict=False,
+print(f"Device: {device}")
+
+# =====================================================
+# Manual checkpoint loader
+#
+# Why not load_from_checkpoint():
+#   Lightning reconstructs the model from hparams saved
+#   inside the checkpoint BEFORE loading weights. If the
+#   saved hparams produce a different architecture than the
+#   current model_GATv2.py (e.g. old checkpoint had
+#   atom_embedder [120,64], current code has [120,768])
+#   it raises RuntimeError even with strict=False because
+#   the size mismatch happens at construction, not loading.
+#
+# Fix: torch.load the raw checkpoint, read hparams from it,
+#   instantiate the LightningModule manually with those hparams,
+#   then call load_state_dict(strict=False) to load all weights
+#   that match and skip any whose shape changed between versions.
+# =====================================================
+raw_ckpt = torch.load(model_file, map_location=device, weights_only=False)
+
+hparams = raw_ckpt.get("hyper_parameters", {})
+print(f"Checkpoint hparams: {hparams}")
+
+lightning_model = GraphMoleculeLightningGATv2(
+    hidden_dim              = hparams.get("hidden_dim",              512),
+    num_layers              = hparams.get("num_layers",                6),
+    num_heads               = hparams.get("num_heads",                 8),
+    lr                      = hparams.get("lr",                     2e-4),
+    weight_decay            = hparams.get("weight_decay",           1e-5),
+    use_contrastive         = hparams.get("use_contrastive",        False),
+    contrastive_weight      = hparams.get("contrastive_weight",      0.1),
+    contrastive_temperature = hparams.get("contrastive_temperature", 0.07),
+    warmup_steps            = hparams.get("warmup_steps",           2000),
 )
-inference_model = lightning_model.model
-inference_model.to(device)
+
+missing, unexpected = lightning_model.load_state_dict(
+    raw_ckpt["state_dict"], strict=False
+)
+if missing:
+    print(f"[warn] Missing keys (random init): {len(missing)} keys")
+    for k in missing[:5]:
+        print(f"       {k}")
+if unexpected:
+    print(f"[warn] Unexpected keys (ignored): {len(unexpected)} keys")
+
+lightning_model.eval()
+inference_model = lightning_model.model.to(device)
 inference_model.eval()
-tokenizer = SMILESTokenizer()
+print("Model loaded successfully.")
 
+tokenizer = SMILESTokenizer(max_atoms=256)
 
-# ===================== Featurizers =====================
+# =====================================================
+# Dataset
+# =====================================================
+class SimpleDataset(torch.utils.data.Dataset):
+    def __init__(self, tokenized_list):
+        self.data = tokenized_list
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        t = self.data[idx]
+        return create_masked_graph_from_tensors(
+            torch.tensor(t["atomic_numbers"], dtype=torch.long),
+            torch.tensor(t["bond_matrix"],    dtype=torch.long),
+            0.0,          # mask_ratio_atoms
+            0.0,          # mask_ratio_bonds
+            t["smiles"],  # smiles
+            False,        # apply_masking
+        )
+
+# =====================================================
+# Featurizers
+# =====================================================
 def _fp_to_np(fp, n_bits):
     arr = np.zeros(n_bits, dtype=np.int8)
     cDataStructs.ConvertToNumpyArray(fp, arr)
     return arr
 
-
-def generate_ecfp(mol, radius=2, n_bits=2048):
-    return (
-        _fp_to_np(
-            AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits), n_bits
-        )
-        if mol
-        else None
+def generate_ecfp(mol):
+    return _fp_to_np(
+        AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048), 2048
     )
-
 
 def generate_maccs(mol):
-    return _fp_to_np(MACCSkeys.GenMACCSKeys(mol), 166) if mol else None
+    return _fp_to_np(MACCSkeys.GenMACCSKeys(mol), 166)
 
-
-def generate_rdkit_fp(mol, n_bits=2048):
-    return _fp_to_np(Chem.RDKFingerprint(mol, fpSize=n_bits), n_bits) if mol else None
-
-
-def generate_atom_pairs(mol, n_bits=2048):
-    return (
-        _fp_to_np(
-            rdMolDescriptors.GetHashedAtomPairFingerprintAsBitVect(mol, nBits=n_bits),
-            n_bits,
-        )
-        if mol
-        else None
-    )
-
-
-def generate_rdkit_descriptors(mol):
-    try:
-        descs = Descriptors.CalcMolDescriptors(mol)
-        return np.array(
-            [
-                d if isinstance(d, (int, float)) and np.isfinite(d) else np.nan
-                for d in descs
-            ],
-            dtype=np.float64,
-        )
-    except:
-        return np.full(len(Descriptors._descList), np.nan, dtype=np.float64)
-
-
-# ===================== Evaluation =====================
-def run_evaluation(X_train, y_train, X_test, y_test, task_type, method_name):
-    if method_name == "2D Descriptors":
-        train_nan_mask = (np.isnan(X_train).sum(axis=1) / X_train.shape[1]) < 0.2
-        test_nan_mask = (np.isnan(X_test).sum(axis=1) / X_test.shape[1]) < 0.2
-        X_train, y_train = X_train[train_nan_mask], y_train[train_nan_mask]
-        X_test, y_test = X_test[test_nan_mask], y_test[test_nan_mask]
-
+# =====================================================
+# Evaluation
+# =====================================================
+def run_evaluation(X_train, y_train, X_test, y_test, task_type):
     if len(X_train) == 0 or len(X_test) == 0:
         return {}
 
     if task_type == "regression":
-        model = XGBRegressor(random_state=42, n_jobs=-1, objective="reg:squarederror")
+        model = XGBRegressor(n_jobs=-1, random_state=42)
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
         return {
-            "R2": r2_score(y_test, y_pred),
-            "RMSE": np.sqrt(mean_squared_error(y_test, y_pred)),
+            "R2":   round(float(r2_score(y_test, y_pred)), 4),
+            "RMSE": round(float(np.sqrt(mean_squared_error(y_test, y_pred))), 4),
         }
+
+    y_train = (y_train > 0).astype(int)
+    y_test  = (y_test  > 0).astype(int)
+
+    if len(np.unique(y_test)) < 2:
+        print("  Skipping -- only one class in test set")
+        return {}
+
+    model = XGBClassifier(n_jobs=-1, eval_metric="logloss", random_state=42)
+    model.fit(X_train, y_train)
+    y_prob = model.predict_proba(X_test)[:, 1]
+    y_pred = (y_prob > 0.5).astype(int)
+
+    return {
+        "AUC":      round(float(roc_auc_score(y_test, y_prob)), 4),
+        "Accuracy": round(float(accuracy_score(y_test, y_pred)), 4),
+        "F1":       round(float(f1_score(y_test, y_pred)), 4),
+    }
+
+# =====================================================
+# Manual datasets
+# =====================================================
+def load_manual_dataset(name):
+    base = "data/benchmarks"
+
+    if name == "FreeSolv":
+        df = pd.read_csv(f"{base}/SAMPL.csv")
+        return df["smiles"], df["expt"], "regression"
+
+    if name == "BBBP":
+        df = pd.read_csv(f"{base}/BBBP.csv")
+        return df["smiles"], df["p_np"], "classification"
+
+    if name == "ClinTox":
+        df = pd.read_csv(f"{base}/clintox.csv.gz")
+        df["y"] = df["FDA_APPROVED"]
+        return df["smiles"], df["y"], "classification"
+
+    return None, None, None
+
+# =====================================================
+# Featurization
+# =====================================================
+def process_and_featurize_split(data, max_atoms=256):
+    if isinstance(data, pd.DataFrame):
+        df = data.copy()
     else:
-        if len(np.unique(y_test)) < 2:
-            return {}
-        scale_pos_weight = (
-            (np.sum(y_train == 0) / np.sum(y_train == 1))
-            if np.sum(y_train == 1) > 0
-            else 1
-        )
-        model = XGBClassifier(
-            random_state=42,
-            n_jobs=-1,
-            use_label_encoder=False,
-            eval_metric="logloss",
-            scale_pos_weight=scale_pos_weight,
-        )
-        model.fit(X_train, y_train)
-        y_pred_proba = model.predict_proba(X_test)[:, 1]
-        y_pred = (y_pred_proba > 0.5).astype(int)
-        return {
-            "AUC": roc_auc_score(y_test, y_pred_proba),
-            "Accuracy": accuracy_score(y_test, y_pred),
-            "Recall": recall_score(y_test, y_pred, zero_division=0),
-            "Precision": precision_score(y_test, y_pred, zero_division=0),
-            "F1": f1_score(y_test, y_pred, zero_division=0),
-        }
+        df = pd.DataFrame({
+            "smiles": [
+                Chem.MolToSmiles(m) if isinstance(m, Chem.Mol) else str(m)
+                for m in data.X
+            ],
+            "y": data.y[:, 0] if data.y.ndim == 2 else data.y,
+        })
 
+    if "smiles" not in df.columns:
+        for col in df.columns:
+            if df[col].dtype == object:
+                df = df.rename(columns={col: "smiles"})
+                break
 
-# ===================== Featurize + Tokenize =====================
-def process_and_featurize_split(dc_dataset, tokenizer, max_atoms=64):
-    df = dc_dataset.to_dataframe()
-    df = df.rename(columns={"X": "smiles"})
-    df["smiles"] = df["smiles"].apply(
-        lambda x: Chem.MolToSmiles(x) if isinstance(x, Chem.Mol) else x
-    )
+    if "y" not in df.columns:
+        df["y"] = df.iloc[:, -1]
+
+    df = df[["smiles", "y"]].dropna()
     df["mol"] = df["smiles"].apply(Chem.MolFromSmiles)
     df = df.dropna(subset=["mol"])
-    df["num_atoms"] = df["mol"].apply(lambda m: m.GetNumAtoms())
-    df = df[df["num_atoms"] <= max_atoms].dropna().reset_index(drop=True)
+    df = df[df["mol"].apply(lambda m: m.GetNumAtoms()) <= max_atoms].reset_index(drop=True)
+
+    print(f"  Molecules after filtering: {len(df)}")
+
     if df.empty:
         return None, None
 
-    target_cols = [col for col in df.columns if col.startswith("y")]
-    y_targets_df = df[target_cols]
     mols = df["mol"].tolist()
 
-    print("   - Generating GNN Embeddings...")
-    df["tokenized"] = df["smiles"].apply(tokenizer.tokenize)
-    dataset_gnn = MaskedMoleculeDataset(
-        df["tokenized"].tolist(), mask_ratio_atoms=0, mask_ratio_bonds=0
-    )
-    loader_gnn = DataLoader(dataset_gnn, batch_size=256, shuffle=False)
+    valid_indices = []
+    tokenized     = []
+    for i, smi in enumerate(df["smiles"]):
+        try:
+            tok = tokenizer.tokenize(smi)
+            tok["smiles"] = smi          # ← store smiles explicitly
+            tokenized.append(tok)
+            valid_indices.append(i)
+        except Exception as e:
+            print(f"  Skipping '{smi[:40]}': {e}")
+
+    if not tokenized:
+        return None, None
+
+    mols  = [mols[i]  for i in valid_indices]
+    y_arr = df["y"].values[valid_indices]
+
+    batch_size = 64 if torch.cuda.is_available() else 16
+    loader = DataLoader(SimpleDataset(tokenized), batch_size=batch_size, shuffle=False)
+
+    gnn_feats = []
     with torch.no_grad():
-        gnn_feats = [
-            inference_model.get_graph_embedding(batch.to(device)).cpu().numpy()
-            for batch in loader_gnn
-        ]
+        for batch in loader:
+            batch = batch.to(device)
+            emb = inference_model.get_embedding(batch)
+            gnn_feats.append(emb.cpu().numpy())
 
-    features = {
-        "Our GNN": np.concatenate(gnn_feats, axis=0),
-        "ECFP": np.array(
-            [
-                (
-                    generate_ecfp(m)
-                    if generate_ecfp(m) is not None
-                    else np.zeros(2048, dtype=np.int8)
-                )
-                for m in mols
-            ]
-        ),
-        "MACCS": np.array(
-            [
-                (
-                    generate_maccs(m)
-                    if generate_maccs(m) is not None
-                    else np.zeros(166, dtype=np.int8)
-                )
-                for m in mols
-            ]
-        ),
-        "RDKit FP": np.array(
-            [
-                (
-                    generate_rdkit_fp(m)
-                    if generate_rdkit_fp(m) is not None
-                    else np.zeros(2048, dtype=np.int8)
-                )
-                for m in mols
-            ]
-        ),
-        "Atom Pairs": np.array(
-            [
-                (
-                    generate_atom_pairs(m)
-                    if generate_atom_pairs(m) is not None
-                    else np.zeros(2048, dtype=np.int8)
-                )
-                for m in mols
-            ]
-        ),
-        "2D Descriptors": np.array([generate_rdkit_descriptors(m) for m in mols]),
+    gnn_feats = np.concatenate(gnn_feats, axis=0)
+
+    feats = {
+        "GNN":   gnn_feats,
+        "ECFP":  np.array([generate_ecfp(m)  for m in mols]),
+        "MACCS": np.array([generate_maccs(m) for m in mols]),
     }
-    return y_targets_df, features
 
+    return y_arr, feats
 
-# ===================== Benchmark Loop =====================
-BENCHMARK_CONFIG = [
-    {
-        "name": "ESOL",
-        "loader": dc.molnet.load_delaney,
-        "task_type": "regression",
-    },
-    {
-        "name": "Lipophilicity",
-        "loader": dc.molnet.load_lipo,
-        "task_type": "regression",
-    },
-    {
-        "name": "BACE",
-        "loader": dc.molnet.load_bace_classification,
-        "task_type": "classification",
-    },
-    {
-        "name": "SIDER",
-        "loader": dc.molnet.load_sider,
-        "task_type": "classification",
-    },
+# =====================================================
+# Benchmarks
+# =====================================================
+BENCHMARKS = [
+    ("ESOL",          dc.molnet.load_delaney,             "regression"),
+    ("Lipophilicity", dc.molnet.load_lipo,                "regression"),
+    ("FreeSolv",      None,                               "regression"),
+    ("BACE",          dc.molnet.load_bace_classification, "classification"),
+    ("BBBP",          None,                               "classification"),
+    ("ClinTox",       None,                               "classification"),
+    ("SIDER",         dc.molnet.load_sider,               "classification"),
 ]
-all_results = []
-for config in BENCHMARK_CONFIG:
-    print(f"\n===== Processing Dataset: {config['name']} =====")
 
-    try:
-        tasks, (train_set, _, test_set), _ = config["loader"](
-            featurizer="Raw",
-            splitter="scaffold",
-            reload=True,
-        )
-    except AttributeError as e:
-        print(f"⚠️ Skipping {config['name']} (loader not available in this DeepChem version)")
-        continue
+results = []
 
-    y_train_df, X_train_features = process_and_featurize_split(train_set, tokenizer)
-    y_test_df, X_test_features = process_and_featurize_split(test_set, tokenizer)
+for name, loader_fn, task in BENCHMARKS:
+    print(f"\n{'='*50}")
+    print(f"  {name}  ({task})")
+    print(f"{'='*50}")
 
-    if y_train_df is None or y_test_df is None:
-        print(f"Skipping {config['name']} due to no valid molecules after filtering.")
-        continue
+    if loader_fn is None:
+        smiles, targets, task = load_manual_dataset(name)
+        if smiles is None:
+            print(f"  Skipping -- file not found in data/benchmarks/")
+            continue
 
-    metric_accumulator = {}
-    n_tasks = len(y_train_df.columns)
+        df = pd.DataFrame({"smiles": smiles, "y": targets}).dropna()
+        train_df = df.sample(frac=0.8, random_state=42)
+        test_df  = df.drop(train_df.index)
+        print(f"  Train: {len(train_df)}  Test: {len(test_df)}")
 
-    for task_name in y_train_df.columns:
-        y_train = y_train_df[task_name].values
-        y_test = y_test_df[task_name].values
+        y_train, X_train = process_and_featurize_split(train_df)
+        y_test,  X_test  = process_and_featurize_split(test_df)
 
-        for method_name, X_train in X_train_features.items():
-            X_test = X_test_features[method_name]
-            metrics = run_evaluation(
-                X_train, y_train, X_test, y_test, config["task_type"], method_name
+    else:
+        try:
+            _, splits, _ = loader_fn(
+                featurizer="Raw", splitter="scaffold", reload=False
             )
-            for k, v in metrics.items():
-                metric_accumulator.setdefault(method_name, {}).setdefault(k, []).append(
-                    float(v)
-                )
+            train_dc, _, test_dc = splits
+        except Exception as e:
+            print(f"  Skipping -- DeepChem load failed: {e}")
+            continue
 
-    if metric_accumulator:
-        result_entry = {
-            "dataset": config["name"],
-            "task": config["task_type"],
-            "metrics": {},
-        }
-        for method, scores in metric_accumulator.items():
-            for metric_name, values in scores.items():
-                result_entry["metrics"].setdefault(metric_name, {})[method] = float(
-                    np.mean(values)
-                )
-        all_results.append(result_entry)
+        print(f"  Train: {len(train_dc)}  Test: {len(test_dc)}")
+        y_train, X_train = process_and_featurize_split(train_dc)
+        y_test,  X_test  = process_and_featurize_split(test_dc)
 
-results_file = os.path.join(BASE_RESULTS_DIR, "benchmark_results.json")
+    if y_train is None or y_test is None:
+        print("  Skipping -- featurization returned empty split")
+        continue
 
-with open(results_file, "w") as f:
-    json.dump(all_results, f, indent=2)
+    for method in X_train:
+        metrics = run_evaluation(
+            X_train[method], y_train,
+            X_test[method],  y_test,
+            task,
+        )
+        print(f"  {method:6s}  {metrics}")
+        results.append({"dataset": name, "method": method, "metrics": metrics})
 
-print(f"\nSaved final benchmark results to {results_file}")
+# =====================================================
+# Save
+# =====================================================
+ckpt_stem   = Path(model_file).stem
+output_path = f"results/benchmark_results_{ckpt_stem}.json"
 
+with open(output_path, "w") as f:
+    json.dump(results, f, indent=2)
+
+print(f"\nDone -- results saved to {output_path}")

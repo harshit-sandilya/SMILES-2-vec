@@ -4,7 +4,7 @@ from rdkit.Chem import AllChem as Chem
 
 
 class SMILESTokenizer:
-    def __init__(self, max_atoms=64):
+    def __init__(self, max_atoms=256):
         self.max_atoms = max_atoms
         self.bond_type_map = {
             Chem.rdchem.BondType.SINGLE: 1,
