@@ -1,5 +1,7 @@
-data/
-results/
-/venv
-__pycache__/
-.DS_Store
+.*
+!.github
+!.gitignore
+
+data
+
+*.lock
