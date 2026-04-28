@@ -22,6 +22,7 @@ mpirun -np 4 python download_molpile.py --batch-size 5000
 import argparse
 import logging
 import os
+import shutil
 from collections import deque
 from pathlib import Path
 from typing import Dict, Iterator, List, Tuple
@@ -72,27 +73,43 @@ def get_molecule_batch(
         Exception: On file read errors
     """
     try:
-        table = pq.read_table(parquet_path)
-        df = table.to_pandas()
-
-        if "id" not in df.columns or "SMILES" not in df.columns:
-            raise ValueError(
-                f"Expected 'id' and 'SMILES' columns, got: {list(df.columns)}"
-            )
+        pf = pq.ParquetFile(parquet_path)
+        total_rows = pf.metadata.num_rows
 
         start_idx = batch_index * batch_size
-        end_idx = start_idx + batch_size
-
-        if start_idx >= len(df):
+        if start_idx >= total_rows:
             return
 
-        batch_df = df.iloc[start_idx:end_idx]
+        end_idx = min(start_idx + batch_size, total_rows)
 
-        for idx, row in batch_df.iterrows():
-            mol_id = str(row["id"])
-            smiles = str(row["SMILES"])
-            if smiles and mol_id:
-                yield mol_id, smiles
+        rows_seen = 0
+        for rg_idx in range(pf.metadata.num_row_groups):
+            rg_rows = pf.metadata.row_group(rg_idx).num_rows
+            rg_start = rows_seen
+            rg_end = rows_seen + rg_rows
+            rows_seen = rg_end
+
+            # Skip row groups entirely outside our window
+            if rg_end <= start_idx:
+                continue
+            if rg_start >= end_idx:
+                break
+
+            table = pf.read_row_group(rg_idx, columns=["id", "SMILES"])
+
+            # Trim to the exact slice window within this row group
+            local_start = max(0, start_idx - rg_start)
+            local_end = min(rg_rows, end_idx - rg_start)
+            table = table.slice(local_start, local_end - local_start)
+
+            ids = table.column("id").to_pylist()
+            smiles_list = table.column("SMILES").to_pylist()
+
+            for mol_id, smiles in zip(ids, smiles_list):
+                mol_id = str(mol_id)
+                smiles = str(smiles)
+                if mol_id and smiles:
+                    yield mol_id, smiles
 
     except Exception as e:
         logger.error(f"Error reading batch {batch_index} from {parquet_path}: {e}")
@@ -115,9 +132,6 @@ def write_parquet(records: List[Dict[str, str]], path: str) -> None:
 def download_molpile_parquet() -> str:
     """
     Download MolPILE parquet file from HuggingFace Hub.
-
-    Args:
-        full_dataset: Whether to download full dataset or subset
 
     Returns:
         Path to the downloaded parquet file
@@ -150,8 +164,8 @@ def get_total_molecules(parquet_path: str) -> int:
     Returns:
         Total number of molecules
     """
-    table = pq.read_table(parquet_path, columns=["id"])
-    return len(table)
+    pf = pq.ParquetFile(parquet_path)
+    return pf.metadata.num_rows
 
 
 def setup_output_directory(out_dir: str, override: bool) -> int:
@@ -194,7 +208,6 @@ def mpi_manager(total_molecules: int, start_k: int, batch_size: int = 10000) -> 
 
     Args:
         total_molecules: Total number of molecules to process
-        parquet_path: Path to the source parquet file
         start_k: Starting parquet file index
         batch_size: Number of molecules per batch
     """
@@ -352,12 +365,12 @@ def main():
     if rank == 0:
         mpi_manager(total_molecules, start_k, batch_size)
 
-        if os.path.exists(parquet_path):
+        if os.path.exists(TEMP_DIR):
             try:
-                os.unlink(TEMP_DIR)
-                logger.info(f"Cleaned up temporary file: {parquet_path}")
+                shutil.rmtree(TEMP_DIR)
+                logger.info(f"Cleaned up temporary file: {TEMP_DIR}")
             except Exception as e:
-                logger.warning(f"Failed to clean up temporary file {parquet_path}: {e}")
+                logger.warning(f"Failed to clean up temporary file {TEMP_DIR}: {e}")
     else:
         mpi_worker(parquet_path, args.out_dir, batch_size)
 

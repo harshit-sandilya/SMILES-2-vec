@@ -1,7 +1,10 @@
 .*
 !.github
 !.gitignore
+__pycache__
 
 data
+logs
+results
 
 *.lock

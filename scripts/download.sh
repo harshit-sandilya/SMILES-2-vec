@@ -35,6 +35,8 @@ export MKL_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 
 PYTHON=$(which python)
+NPROCS=${SLURM_NTASKS:-224}
+ZINC_PROCS=$(( NPROCS < 4 ? NPROCS : 4 ))
 
 echo ""
 echo "[config] Python → $PYTHON"
@@ -44,15 +46,16 @@ echo ""
 # ── Helper: timed mpirun step ─────────────────────────────────────────────
 run_step() {
     local label=$1
-    local script=$2
-    shift 2
+    local nprocs=$2
+    local script=$3
+    shift 3
 
     echo "--------------------------------------------------------"
-    echo "  $label"
+    echo "  $label (ranks: $nprocs)"
     echo "  Start: $(date)"
     echo "--------------------------------------------------------"
 
-    mpirun --bind-to none "$PYTHON" "$script" "$@"
+    mpirun --bind-to none -np "$nprocs" "$PYTHON" "$script" "$@"
 
     echo "--------------------------------------------------------"
     echo "  $label"
@@ -61,9 +64,9 @@ run_step() {
 }
 
 # ── Run downloads sequentially ────────────────────────────────────────────
-run_step "[1/3] GDB13"   download/download_gdb13.py   --override
-run_step "[2/3] MolPILE" download/download_molpile.py --override
-run_step "[3/3] ZINC"    download/download_zinc.py    --override
+run_step "[1/3] GDB13"   "$NPROCS" download/download_gdb13.py   --override
+run_step "[2/3] MolPILE" "$NPROCS" download/download_molpile.py --override
+run_step "[3/3] ZINC"    "$ZINC_PROCS" download/download_zinc.py    --override
 
 # ── Summary ───────────────────────────────────────────────────────────────
 echo "========================================================"

@@ -22,6 +22,7 @@ mpirun -np 4 python download_gdb13.py --batch-size 5000
 import argparse
 import logging
 import os
+import shutil
 import sys
 import tarfile
 from collections import deque
@@ -434,7 +435,6 @@ def main():
             logger.error(f"Rank 0 setup failed: {e}")
             return 1
     else:
-        archive_path = comm.bcast(None, root=0)
         flat_tasks = comm.bcast(None, root=0)
         total_batches = comm.bcast(None, root=0)
         start_k = comm.bcast(None, root=0)
@@ -443,12 +443,12 @@ def main():
     if rank == 0:
         mpi_manager(total_batches, start_k, batch_size)
 
-        if os.path.exists(archive_path):
+        if os.path.exists(TEMP_DIR):
             try:
-                os.unlink(TEMP_DIR)
-                logger.info(f"Cleaned up temporary file: {archive_path}")
+                shutil.rmtree(TEMP_DIR)
+                logger.info(f"Cleaned up temporary dir: {TEMP_DIR}")
             except Exception as e:
-                logger.warning(f"Failed to clean up temporary file {archive_path}: {e}")
+                logger.warning(f"Failed to clean up temporary dir {TEMP_DIR}: {e}")
     else:
         mpi_worker(flat_tasks, args.out_dir, batch_size)
 

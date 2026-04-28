@@ -1,16 +1,17 @@
-import torch
 import math
+
 import pytorch_lightning as pl
+import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
 
-from train.models.model_GATv2 import GraphMoleculeModelGATv2
-from config_GATv2 import (
+from .config import (
     ATOM_VOCAB_SIZE,
     BOND_VOCAB_SIZE,
     EMBEDDING_DIM,
     PROPERTY_LOSS_WEIGHT,
 )
+from .model import GraphMoleculeModelGATv2
 
 
 class GraphMoleculeLightningGATv2(pl.LightningModule):

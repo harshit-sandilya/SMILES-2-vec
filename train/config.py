@@ -23,14 +23,11 @@ HIDDEN_DIM = 768
 NUM_LAYERS = 8
 NUM_HEADS = 12
 EMBEDDING_DIM = 256
-
-
-# ---------------- Contrastive ----------------
 PROPERTY_LOSS_WEIGHT = 0.5
 
 
 # ---------------- Hardware ----------------
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-NUM_WORKERS = 32  # For streaming dataset loading
+NUM_WORKERS = 32
 PIN_MEMORY = True
 PERSISTENT_WORKERS = True

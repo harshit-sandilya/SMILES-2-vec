@@ -1,11 +1,11 @@
 import torch
-from rdkit.Chem import AllChem as Chem
 from rdkit import Chem as RChem
+from rdkit.Chem import AllChem as Chem
 from rdkit.Chem import MolFromSmarts
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
-from config_GATv2 import MASK_ATOM_ID, MASK_BOND_ID
+from .config import MASK_BOND_ID
 
 # ==============================================================
 # Rich atom feature extractor

@@ -1,25 +1,25 @@
 import os
+
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, TQDMProgressBar
+import torch
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, TQDMProgressBar
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.strategies import DDPStrategy
 
-from config_GATv2 import (
-    EPOCHS,
+from .config import (
     BATCH_SIZE,
-    LEARNING_RATE,
+    EPOCHS,
     HIDDEN_DIM,
-    NUM_LAYERS,
+    LEARNING_RATE,
     NUM_HEADS,
+    NUM_LAYERS,
     NUM_WORKERS,
+    PROPERTY_LOSS_WEIGHT,
     VAL_CHECK_STEPS,
     WARMUP_STEPS,
-    PROPERTY_LOSS_WEIGHT,
 )
-import torch
-from train.data_module_GATv2 import MoleculeDataModule
-from train.lightning_model_GATv2 import GraphMoleculeLightningGATv2
-
+from .data_module import MoleculeDataModule
+from .lightning_model import GraphMoleculeLightningGATv2
 
 # ---------------- Paths ----------------
 BASE_DATA_DIR = "./data/optimized"

@@ -10,7 +10,6 @@ from torch_geometric.nn import (
 
 
 class GraphMoleculeModelGATv2(nn.Module):
-
     def __init__(
         self,
         hidden_dim,
