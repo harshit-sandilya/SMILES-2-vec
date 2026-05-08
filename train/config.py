@@ -28,6 +28,6 @@ PROPERTY_LOSS_WEIGHT = 0.5
 
 # ---------------- Hardware ----------------
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-NUM_WORKERS = 32
+NUM_WORKERS = 24
 PIN_MEMORY = True
 PERSISTENT_WORKERS = True

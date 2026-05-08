@@ -5,13 +5,13 @@ import torch
 import torch.nn.functional as F
 from torch.optim import AdamW
 
-from .config import (
+from train.config import (
     ATOM_VOCAB_SIZE,
     BOND_VOCAB_SIZE,
     EMBEDDING_DIM,
     PROPERTY_LOSS_WEIGHT,
 )
-from .model import GraphMoleculeModelGATv2
+from train.model import GraphMoleculeModelGATv2
 
 
 class GraphMoleculeLightningGATv2(pl.LightningModule):
@@ -83,11 +83,23 @@ class GraphMoleculeLightningGATv2(pl.LightningModule):
         )
 
         bs = batch.num_graphs
-        self.log("train_loss", total_loss, prog_bar=True, batch_size=bs)
-        self.log("train_recon_loss", recon_loss, prog_bar=False, batch_size=bs)
-        self.log("train_atom_loss", atom_loss, prog_bar=False, batch_size=bs)
-        self.log("train_bond_loss", bond_loss, prog_bar=False, batch_size=bs)
-        self.log("train_prop_loss", prop_loss, prog_bar=True, batch_size=bs)
+        self.log("train_loss", total_loss, prog_bar=True, batch_size=bs, sync_dist=True)
+        self.log(
+            "train_recon_loss",
+            recon_loss,
+            prog_bar=False,
+            batch_size=bs,
+            sync_dist=True,
+        )
+        self.log(
+            "train_atom_loss", atom_loss, prog_bar=False, batch_size=bs, sync_dist=True
+        )
+        self.log(
+            "train_bond_loss", bond_loss, prog_bar=False, batch_size=bs, sync_dist=True
+        )
+        self.log(
+            "train_prop_loss", prop_loss, prog_bar=True, batch_size=bs, sync_dist=True
+        )
 
         return total_loss
 
@@ -100,11 +112,19 @@ class GraphMoleculeLightningGATv2(pl.LightningModule):
         )
 
         bs = batch.num_graphs
-        self.log("val_loss", total_loss, prog_bar=True, batch_size=bs)
-        self.log("val_recon_loss", recon_loss, prog_bar=False, batch_size=bs)
-        self.log("val_atom_loss", atom_loss, prog_bar=False, batch_size=bs)
-        self.log("val_bond_loss", bond_loss, prog_bar=False, batch_size=bs)
-        self.log("val_prop_loss", prop_loss, prog_bar=False, batch_size=bs)
+        self.log("val_loss", total_loss, prog_bar=True, batch_size=bs, sync_dist=True)
+        self.log(
+            "val_recon_loss", recon_loss, prog_bar=False, batch_size=bs, sync_dist=True
+        )
+        self.log(
+            "val_atom_loss", atom_loss, prog_bar=False, batch_size=bs, sync_dist=True
+        )
+        self.log(
+            "val_bond_loss", bond_loss, prog_bar=False, batch_size=bs, sync_dist=True
+        )
+        self.log(
+            "val_prop_loss", prop_loss, prog_bar=False, batch_size=bs, sync_dist=True
+        )
 
         return total_loss
 
@@ -117,11 +137,19 @@ class GraphMoleculeLightningGATv2(pl.LightningModule):
         )
 
         bs = batch.num_graphs
-        self.log("test_loss", total_loss, prog_bar=True, batch_size=bs)
-        self.log("test_recon_loss", recon_loss, prog_bar=False, batch_size=bs)
-        self.log("test_atom_loss", atom_loss, prog_bar=False, batch_size=bs)
-        self.log("test_bond_loss", bond_loss, prog_bar=False, batch_size=bs)
-        self.log("test_prop_loss", prop_loss, prog_bar=False, batch_size=bs)
+        self.log("test_loss", total_loss, prog_bar=True, batch_size=bs, sync_dist=True)
+        self.log(
+            "test_recon_loss", recon_loss, prog_bar=False, batch_size=bs, sync_dist=True
+        )
+        self.log(
+            "test_atom_loss", atom_loss, prog_bar=False, batch_size=bs, sync_dist=True
+        )
+        self.log(
+            "test_bond_loss", bond_loss, prog_bar=False, batch_size=bs, sync_dist=True
+        )
+        self.log(
+            "test_prop_loss", prop_loss, prog_bar=False, batch_size=bs, sync_dist=True
+        )
 
         return total_loss
 

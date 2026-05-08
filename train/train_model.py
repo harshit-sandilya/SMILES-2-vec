@@ -6,7 +6,7 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, TQDMProg
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.strategies import DDPStrategy
 
-from .config import (
+from train.config import (
     BATCH_SIZE,
     EPOCHS,
     HIDDEN_DIM,
@@ -18,8 +18,8 @@ from .config import (
     VAL_CHECK_STEPS,
     WARMUP_STEPS,
 )
-from .data_module import MoleculeDataModule
-from .lightning_model import GraphMoleculeLightningGATv2
+from train.data_module import MoleculeDataModule
+from train.lightning_model import GraphMoleculeLightningGATv2
 
 # ---------------- Paths ----------------
 BASE_DATA_DIR = "./data/optimized"
@@ -35,6 +35,10 @@ os.makedirs(BASE_LOGS_DIR, exist_ok=True)
 def main():
 
     pl.seed_everything(42)
+    num_nodes = int(os.environ.get("SLURM_NNODES", 1))
+    ckpt_path = os.environ.get("RESUME_CKPT") or None
+    if ckpt_path and not os.path.exists(ckpt_path):
+        raise FileNotFoundError(f"RESUME_CKPT set but file not found: {ckpt_path}")
 
     # ---------------- Data ----------------
     datamodule = MoleculeDataModule(
@@ -81,7 +85,7 @@ def main():
         verbose=True,
     )
 
-    progress_bar = TQDMProgressBar(refresh_rate=100)
+    progress_bar = TQDMProgressBar(refresh_rate=100, leave=True)
 
     # ---------------- Logger ----------------
     tensorboard_logger = TensorBoardLogger(
@@ -91,20 +95,22 @@ def main():
 
     # ---------------- Trainer ----------------
     trainer = pl.Trainer(
-        strategy=DDPStrategy(find_unused_parameters=True),
+        strategy=DDPStrategy(),
         max_epochs=EPOCHS,
         accelerator="gpu",
-        devices=-1,
+        num_nodes=num_nodes,
+        devices=8,
         precision="bf16-mixed",
         gradient_clip_val=1.0,
         callbacks=[checkpoint_callback, early_stopping_callback, progress_bar],
         logger=tensorboard_logger,
         log_every_n_steps=50,
         val_check_interval=VAL_CHECK_STEPS,
+        accumulate_grad_batches=2,
     )
 
     print("Starting training...")
-    trainer.fit(model, datamodule=datamodule)
+    trainer.fit(model, datamodule=datamodule, ckpt_path=ckpt_path)
     print("Training completed")
 
     # ---------------- Test ----------------

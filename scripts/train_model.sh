@@ -32,13 +32,26 @@ echo "[env] PyTorch -> $(python -c 'import torch; print(torch.__version__)')"
 echo "[env] CUDA   -> $(python -c 'import torch; print(torch.version.cuda)')"
 echo ""
 
+# ── Resume config ─────────────────────────────────────────────────────
+# RESUME_CKPT=""
+RESUME_CKPT="./results/models/last.ckpt"
+export RESUME_CKPT
+# ──────────────────────────────────────────────────────────────────────
+
 export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OMP_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export RDKIT_LOGLEVEL=ERROR
+export NCCL_DEBUG=WARN
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export TORCH_USE_CUDA_DSA=1
 
-python -u train/train_model.py
+echo "--------------------------------------------------------"
+echo "  Launching with srun  |  $(date)"
+echo "--------------------------------------------------------"
+
+srun --kill-on-bad-exit=1 stdbuf -oL -eL python -u -m train.train_model
 
 echo ""
 echo "================================================================"

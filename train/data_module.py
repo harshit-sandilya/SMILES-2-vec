@@ -207,6 +207,7 @@ class MoleculeDataModule(pl.LightningDataModule):
             collate_fn=collate_fn,
             pin_memory=True,
             persistent_workers=(self.num_workers > 0),
+            prefetch_factor=4,
         )
 
     # ── Dataloaders ──────────────────────────────────────────────────────

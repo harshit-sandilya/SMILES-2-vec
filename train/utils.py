@@ -5,7 +5,7 @@ from rdkit.Chem import MolFromSmarts
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
-from .config import MASK_BOND_ID
+from train.config import MASK_BOND_ID
 
 # ==============================================================
 # Rich atom feature extractor
