@@ -28,6 +28,8 @@ BASE_MODELS_DIR = os.path.join(BASE_RESULTS_DIR, "models")
 BASE_LOGS_DIR = os.path.join(BASE_RESULTS_DIR, "logs")
 
 torch.set_float32_matmul_precision("high")
+torch.backends.cudnn.allow_tf32 = True
+
 os.makedirs(BASE_MODELS_DIR, exist_ok=True)
 os.makedirs(BASE_LOGS_DIR, exist_ok=True)
 
@@ -99,7 +101,7 @@ def main():
         max_epochs=EPOCHS,
         accelerator="gpu",
         num_nodes=num_nodes,
-        devices=8,
+        devices="auto",
         precision="bf16-mixed",
         gradient_clip_val=1.0,
         callbacks=[checkpoint_callback, early_stopping_callback, progress_bar],

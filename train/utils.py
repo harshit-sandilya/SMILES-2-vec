@@ -189,19 +189,24 @@ def create_masked_graph_from_tensors(
     smiles: str,
     apply_masking: bool = True,
 ) -> Data:
-    num_atoms = (atomic_numbers != 0).sum().item()
-
-    # -----------------------------
-    # Node features
-    # -----------------------------
     mol = RChem.MolFromSmiles(smiles)
-    atomic_feats = get_atom_features(mol)  # [N, 7]
+    if mol is None:
+        raise ValueError(f"RDKit cannot parse SMILES: {smiles!r}")
 
-    # -----------------------------
-    # Build edges
-    # -----------------------------
+    num_atoms = mol.GetNumAtoms()
+
+    atomic_feats = get_atom_features(mol)  # [num_atoms, 7]
+    assert atomic_feats.shape[0] == num_atoms
+
     bond_matrix_unpadded = bond_matrix[:num_atoms, :num_atoms]
     edge_index = bond_matrix_unpadded.nonzero().t().contiguous()
+
+    # Validate before any GPU touch
+    if edge_index.numel() > 0:
+        assert edge_index.max() < num_atoms, (
+            f"edge_index OOB: max={edge_index.max()}, num_atoms={num_atoms}, smiles={smiles!r}"
+        )
+
     edge_attr = bond_matrix_unpadded[edge_index[0], edge_index[1]].clone()
     edge_bond_feats = get_edge_bond_features(mol, edge_index)
 
@@ -220,12 +225,10 @@ def create_masked_graph_from_tensors(
         # broader molecular scaffold rather than local neighbourhood.
         # --------------------------------------------------------------
         fg_masked = set()
-        mol = RChem.MolFromSmiles(smiles)
-        if mol is not None:
-            for query in FG_QUERIES:
-                for match in mol.GetSubstructMatches(query):
-                    if torch.rand(1).item() < 0.5:
-                        fg_masked.update(match)
+        for query in FG_QUERIES:
+            for match in mol.GetSubstructMatches(query):
+                if torch.rand(1).item() < 0.5:
+                    fg_masked.update(match)
 
         # Top-up with random masking to reach target ratio
         target_n_masked = max(int(num_atoms * mask_ratio_atoms), 1)

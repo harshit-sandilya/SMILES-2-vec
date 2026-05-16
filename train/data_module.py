@@ -151,16 +151,25 @@ class MoleculeDataModule(pl.LightningDataModule):
         """
         graphs = []
         for item in batch:
-            graph = create_masked_graph_from_tensors(
-                atomic_numbers=item["atomic_numbers"],
-                bond_matrix=item["bond_matrix"],
-                mask_ratio_atoms=self.train_mask_atoms,
-                mask_ratio_bonds=self.train_mask_bonds,
-                smiles=item["smiles"],
-                apply_masking=True,
-            )
-            graph.mol_props = item["mol_props"].unsqueeze(0)  # [1, 4]
-            graphs.append(graph)
+            try:
+                graph = create_masked_graph_from_tensors(
+                    atomic_numbers=item["atomic_numbers"],
+                    bond_matrix=item["bond_matrix"],
+                    mask_ratio_atoms=self.train_mask_atoms,
+                    mask_ratio_bonds=self.train_mask_bonds,
+                    smiles=item["smiles"],
+                    apply_masking=True,
+                )
+                graph.mol_props = item["mol_props"].unsqueeze(0)
+                graphs.append(graph)
+            except Exception as e:
+                print(f"[collate] {type(e).__name__}: {e}", flush=True)
+                print(f"[collate] keys: {list(item.keys())}", flush=True)
+                raise
+
+        if not graphs:
+            raise RuntimeError("Entire batch failed — check dataset integrity")
+
         return Batch.from_data_list(graphs)
 
     def collate_graphs_eval(self, batch: list[dict]) -> Batch:
@@ -174,16 +183,25 @@ class MoleculeDataModule(pl.LightningDataModule):
         """
         graphs = []
         for item in batch:
-            graph = create_masked_graph_from_tensors(
-                atomic_numbers=item["atomic_numbers"],
-                bond_matrix=item["bond_matrix"],
-                mask_ratio_atoms=self.eval_mask_atoms,
-                mask_ratio_bonds=self.eval_mask_bonds,
-                smiles=item["smiles"],
-                apply_masking=True,
-            )
-            graph.mol_props = item["mol_props"].unsqueeze(0)  # [1, 4]
-            graphs.append(graph)
+            try:
+                graph = create_masked_graph_from_tensors(
+                    atomic_numbers=item["atomic_numbers"],
+                    bond_matrix=item["bond_matrix"],
+                    mask_ratio_atoms=self.eval_mask_atoms,
+                    mask_ratio_bonds=self.eval_mask_bonds,
+                    smiles=item["smiles"],
+                    apply_masking=True,
+                )
+                graph.mol_props = item["mol_props"].unsqueeze(0)
+                graphs.append(graph)
+            except Exception as e:
+                print(f"[collate] {type(e).__name__}: {e}", flush=True)
+                print(f"[collate] keys: {list(item.keys())}", flush=True)
+                raise
+
+        if not graphs:
+            raise RuntimeError("Entire batch failed — check dataset integrity")
+
         return Batch.from_data_list(graphs)
 
     # ── Shared loader factory ────────────────────────────────────────────
@@ -207,7 +225,7 @@ class MoleculeDataModule(pl.LightningDataModule):
             collate_fn=collate_fn,
             pin_memory=True,
             persistent_workers=(self.num_workers > 0),
-            prefetch_factor=4,
+            prefetch_factor=16,
         )
 
     # ── Dataloaders ──────────────────────────────────────────────────────
