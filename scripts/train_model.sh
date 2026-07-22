@@ -48,39 +48,6 @@ export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export PYTHONNOUSERSITE=1
 export PYTHONUNBUFFERED=1
 
-MASTER_HOST=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-case "$MASTER_HOST" in
-  innmi1srh1-p003) MASTER_ADDR=100.81.5.16 ;;
-  innmi1srh1-p013) MASTER_ADDR=100.81.5.14 ;;
-  innmi1srh1-p016) MASTER_ADDR=100.81.5.17 ;;
-  innmi1srh1-p017) MASTER_ADDR=100.81.5.18 ;;
-  innmi1srh1-p020) MASTER_ADDR=100.81.5.19 ;;
-  innmi1srh1-p021) MASTER_ADDR=100.81.5.11 ;;
-  innmi1srh1-p022) MASTER_ADDR=100.81.5.12 ;;
-  innmi1srh1-p023) MASTER_ADDR=100.81.5.15 ;;
-  innmi1srh1-p028) MASTER_ADDR=100.81.5.20 ;;
-  *)
-    MASTER_ADDR="$(getent hosts "$MASTER_HOST" | awk '{print $1}' | head -n 1)"
-    if [[ "$MASTER_ADDR" == 127.* ]]; then
-      echo "ERROR: MASTER_HOST=$MASTER_HOST resolved to loopback MASTER_ADDR=$MASTER_ADDR" >&2
-      exit 2
-    fi
-    ;;
-esac
-export MASTER_ADDR
-export MASTER_PORT=29500
-export NCCL_SOCKET_IFNAME=bond0
-export GLOO_SOCKET_IFNAME=bond0
-export TP_SOCKET_IFNAME=bond0
-
-echo "MASTER_ADDR=$MASTER_ADDR"
-echo "MASTER_PORT=$MASTER_PORT"
-
-export NCCL_IB_DISABLE=0
-export NCCL_DEBUG=WARN
-export TORCH_DISTRIBUTED_DEBUG=DETAIL
-export CUDA_DEVICE_MAX_CONNECTIONS=1
-
 srun hostname
 
 echo "--------------------------------------------------------"
